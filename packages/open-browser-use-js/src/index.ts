@@ -41,10 +41,116 @@ export type OpenBrowserUseGotoOptions = {
   timeoutMs?: number;
 };
 
+
 export type OpenBrowserUseWaitForLoadStateOptions = {
   state?: OpenBrowserUseLoadState;
   timeoutMs?: number;
 };
+export type FinalizeKeepEntry = {
+  tabId: number;
+  status: "handoff" | "deliverable";
+};
+
+export type CdpCommandResult = { [key: string]: JsonValue };
+
+export type EvaluatePageFunction<A, T> = (args: A) => T | Promise<T>;
+
+export type EvaluateOptions = {
+  awaitPromise?: boolean;
+};
+
+export type WaitForOptions = {
+  timeoutMs?: number;
+  intervalMs?: number;
+  awaitPromise?: boolean;
+};
+
+export class OpenBrowserUseEvaluateError extends Error {
+  readonly tabId: number;
+  readonly expression: string;
+
+  constructor(message: string, details: { tabId: number; expression: string }) {
+    super(message);
+    this.name = "OpenBrowserUseEvaluateError";
+    this.tabId = details.tabId;
+    this.expression = details.expression;
+  }
+}
+
+export class OpenBrowserUseWaitTimeoutError extends Error {
+  readonly tabId: number;
+  readonly condition: string;
+  readonly lastValue: JsonValue;
+
+  constructor(message: string, details: { tabId: number; condition: string; lastValue: JsonValue }) {
+    super(message);
+    this.name = "OpenBrowserUseWaitTimeoutError";
+    this.tabId = details.tabId;
+    this.condition = details.condition;
+    this.lastValue = details.lastValue;
+  }
+}
+
+export function serializePageFunction<A>(pageFunction: Function, args?: A): string {
+  if (typeof pageFunction !== "function") {
+    throw new TypeError("pageFunction must be a function");
+  }
+  let source: string;
+  try {
+    source = pageFunction.toString();
+  } catch {
+    throw new TypeError("pageFunction must be serializable via toString()");
+  }
+  if (!source.trim()) {
+    throw new TypeError("pageFunction source is empty");
+  }
+  let argsJson: string;
+  try {
+    argsJson = JSON.stringify(args ?? null);
+  } catch (error) {
+    throw new TypeError(`pageFunction args must be JSON-serializable (${(error as Error).message})`);
+  }
+  return `(${source})(${argsJson})`;
+}
+
+export function formatEvaluateError(response: { [key: string]: JsonValue } | null | undefined, fallback: string): string {
+  if (!response || !isObject(response.exceptionDetails)) {
+    return fallback;
+  }
+  const details = response.exceptionDetails;
+  const description = stringValue(isObject(details.exception) ? details.exception.description : undefined);
+  const text = stringValue(details.text);
+  const url = stringValue(details.url);
+  const line = typeof details.lineNumber === "number" ? details.lineNumber : undefined;
+  const column = typeof details.columnNumber === "number" ? details.columnNumber : undefined;
+  if (description) {
+    return description;
+  }
+  const location = url ? `${url}${line !== undefined ? `:${line}${column !== undefined ? `:${column}` : ""}` : ""}` : undefined;
+  if (text) {
+    return location ? `${text} at ${location}` : text;
+  }
+  return location ? `${fallback} at ${location}` : fallback;
+}
+
+export function assertFinalizeKeep(keep: unknown): asserts keep is FinalizeKeepEntry[] {
+  if (!Array.isArray(keep)) {
+    throw new TypeError("finalizeTabs keep must be an array of {tabId: number, status: \"handoff\" | \"deliverable\"}");
+  }
+  for (const entry of keep) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new TypeError(`invalid finalizeTabs keep entry ${JSON.stringify(entry)}; expected {tabId: number, status: "handoff" | "deliverable"}`);
+    }
+    const { tabId, status } = entry as { tabId?: unknown; status?: unknown };
+    if (typeof tabId !== "number" || !Number.isInteger(tabId) || tabId <= 0) {
+      throw new TypeError(`invalid finalizeTabs keep tabId ${JSON.stringify(tabId)}; expected a positive integer`);
+    }
+    if (status !== "handoff" && status !== "deliverable") {
+      throw new TypeError(`invalid finalizeTabs keep status ${JSON.stringify(status)}; expected "handoff" or "deliverable"`);
+    }
+
+  }
+}
 
 export type OpenBrowserUseBrowserOptions = OpenBrowserUseClientOptions | { client: OpenBrowserUseClient };
 
@@ -148,7 +254,8 @@ export class OpenBrowserUseClient {
     return this.request("claimUserTab", { tabId });
   }
 
-  finalizeTabs(keep: JsonValue[]): Promise<JsonValue> {
+  finalizeTabs(keep: FinalizeKeepEntry[] = []): Promise<JsonValue> {
+    assertFinalizeKeep(keep);
     return this.request("finalizeTabs", { keep });
   }
 
@@ -164,12 +271,12 @@ export class OpenBrowserUseClient {
     return this.request("detach", { tabId });
   }
 
-  executeCdp(tabId: number, method: string, commandParams: BrowserUseRequestParams = {}): Promise<JsonValue> {
+  executeCdp(tabId: number, method: string, commandParams: BrowserUseRequestParams = {}): Promise<CdpCommandResult> {
     return this.request("executeCdp", {
       target: { tabId },
       method,
       commandParams
-    });
+    }) as Promise<CdpCommandResult>;
   }
 
   moveMouse(tabId: number, x: number, y: number, waitForArrival = true): Promise<JsonValue> {
@@ -348,8 +455,28 @@ export class OpenBrowserUseTab {
     return this.browser.cdp.evaluate(this.id, "document.body?.innerText ?? ''").then((value) => String(value ?? ""));
   }
 
-  evaluate(expression: string, options: { awaitPromise?: boolean } = {}): Promise<JsonValue> {
+  evaluate(expression: string, options?: EvaluateOptions): Promise<JsonValue>;
+  evaluate<A, T>(pageFunction: EvaluatePageFunction<A, T>, args?: A, options?: EvaluateOptions): Promise<T>;
+  evaluate(expressionOrPageFunction: string | Function, argsOrOptions?: unknown, options?: EvaluateOptions): Promise<unknown> {
+    if (typeof expressionOrPageFunction === "function") {
+      const expression = serializePageFunction(expressionOrPageFunction, argsOrOptions);
+      return this.browser.cdp.evaluate(this.id, expression, options ?? {});
+    }
+    return this.browser.cdp.evaluate(this.id, expressionOrPageFunction, (argsOrOptions as EvaluateOptions | undefined) ?? {});
+  }
+
+  /** Evaluate a raw JavaScript expression. Prefer the function form {@link evaluate} when possible. */
+  evaluateRaw(expression: string, options: EvaluateOptions = {}): Promise<JsonValue> {
     return this.browser.cdp.evaluate(this.id, expression, options);
+  }
+
+  waitFor(selector: string, options?: WaitForOptions): Promise<JsonValue>;
+  waitFor<A, T>(pageFunction: EvaluatePageFunction<A, T>, args?: A, options?: WaitForOptions): Promise<T>;
+  waitFor(condition: string | Function, argsOrOptions?: unknown, options?: WaitForOptions): Promise<unknown> {
+    if (typeof condition === "function") {
+      return this.browser.cdp.waitFor(this.id, condition, argsOrOptions, options);
+    }
+    return this.browser.cdp.waitFor(this.id, condition, argsOrOptions as WaitForOptions | undefined);
   }
 
   close(): Promise<JsonValue> {
@@ -385,25 +512,43 @@ export class OpenBrowserUseCdp {
     tabId: number,
     method: string,
     commandParams: BrowserUseRequestParams = {},
-    options: { timeoutMs?: number } = {}
-  ): Promise<JsonValue> {
+    options: { timeoutMs?: number; retried?: boolean } = {}
+  ): Promise<CdpCommandResult> {
     await this.ensureAttached(tabId);
-    return this.client.request("executeCdp", {
-      target: { tabId },
-      method,
-      commandParams,
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
-    });
+    try {
+      return (await this.client.request("executeCdp", {
+        target: { tabId },
+        method,
+        commandParams,
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })
+      })) as CdpCommandResult;
+    } catch (error) {
+      // The debugger can be detached out from under us (finalize, navigation),
+      // while our attach bookkeeping thinks the tab is still attached. Reset
+      // the bookkeeping and retry once.
+      if (!options.retried && isDebuggerDetachedError(error)) {
+        this.#attachedTabIds.delete(tabId);
+        return this.call(tabId, method, commandParams, { ...options, retried: true });
+      }
+      throw error;
+    }
   }
 
-  async evaluate(tabId: number, expression: string, options: { awaitPromise?: boolean } = {}): Promise<JsonValue> {
+  async evaluate(
+    tabId: number,
+    expression: string,
+    options: EvaluateOptions = {}
+  ): Promise<JsonValue> {
     const result = await this.call(tabId, "Runtime.evaluate", {
       expression,
       returnByValue: true,
       ...(options.awaitPromise === undefined ? {} : { awaitPromise: options.awaitPromise })
     });
     if (isObject(result) && isObject(result.exceptionDetails)) {
-      throw new Error(String(result.exceptionDetails.text ?? "Open Browser Use evaluation failed"));
+      throw new OpenBrowserUseEvaluateError(
+        formatEvaluateError(result, `evaluation failed in tab ${tabId}`),
+        { tabId, expression }
+      );
     }
     return isObject(result) && isObject(result.result) ? (result.result.value ?? null) : null;
   }
@@ -520,6 +665,43 @@ export class OpenBrowserUseCdp {
     await this.client.attach(tabId);
     this.#attachedTabIds.add(tabId);
   }
+
+  async waitFor(tabId: number, selector: string, options?: WaitForOptions): Promise<JsonValue>;
+  async waitFor<A>(tabId: number, pageFunction: Function, args?: A, options?: WaitForOptions): Promise<JsonValue>;
+  async waitFor(
+    tabId: number,
+    condition: string | Function,
+    argsOrOptions?: unknown,
+    options?: WaitForOptions
+  ): Promise<JsonValue> {
+    const waitOptions: WaitForOptions =
+      typeof condition === "function" ? (options ?? {}) : ((argsOrOptions as WaitForOptions | undefined) ?? {});
+    const args = typeof condition === "function" ? argsOrOptions : undefined;
+    const timeoutMs = waitOptions.timeoutMs ?? 10_000;
+    const intervalMs = waitOptions.intervalMs ?? 500;
+    const awaitPromise = waitOptions.awaitPromise;
+    const expression =
+      typeof condition === "function"
+        ? serializePageFunction(condition, args)
+        : `!!document.querySelector(${JSON.stringify(condition)})`;
+    const conditionLabel = typeof condition === "function" ? condition.toString().slice(0, 200) : condition;
+    const deadline = Date.now() + timeoutMs;
+    let lastValue: JsonValue = null;
+    for (;;) {
+      lastValue = await this.evaluate(tabId, expression, { ...(awaitPromise === undefined ? {} : { awaitPromise }) });
+      if (isTruthy(lastValue)) {
+        return lastValue;
+      }
+      if (Date.now() >= deadline) {
+        break;
+      }
+      await sleep(intervalMs);
+    }
+    throw new OpenBrowserUseWaitTimeoutError(
+      `Timed out after ${timeoutMs}ms waiting on tab ${tabId} for: ${conditionLabel}`,
+      { tabId, condition: conditionLabel, lastValue }
+    );
+  }
 }
 
 export function encodeFrame(value: JsonValue | Record<string, unknown>): Buffer {
@@ -584,6 +766,18 @@ function cdpEventForTab(
   };
 }
 
+
 function stringValue(value: JsonValue | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+function isTruthy(value: JsonValue): boolean {
+  return value !== null && value !== false && value !== 0 && value !== "" && value !== undefined;
+}
+
+function isDebuggerDetachedError(error: unknown): boolean {
+  return error instanceof Error && /Debugger unattached/i.test(error.message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -78,6 +78,60 @@ The same tab helpers are available without the `playwright` alias:
 ```js
 await tab.goto(url, { waitUntil: "load", timeoutMs: 15000 });
 await tab.waitForLoadState({ state: "domcontentloaded", timeoutMs: 15000 });
+## Evaluating Page Code
+
+`evaluate` prefers a **page function** over raw expression strings. The
+function is serialized via `toString()` and must not capture outer closure
+variables; the first parameter receives the JSON-serializable `args` value
+(mirrors Playwright's `page.evaluate(fn, arg)`):
+
+```js
+const count = await tab.evaluate(
+  (args) => document.querySelectorAll(args.selector).length,
+  { selector: "[data-testid=\"tweet\"]" }
+);
+```
+
+The string form still works and is available explicitly as `evaluateRaw`:
+
+```js
+const title = await tab.evaluate("document.title");
+const title2 = await tab.evaluateRaw("document.title");
+```
+
+Both forms throw `OpenBrowserUseEvaluateError` when the page itself throws;
+the error message carries the real page error and stack trace (CDP's
+`exceptionDetails.exception.description`), plus `.expression` and `.tabId`
+for debugging.
+
+## Waiting for Conditions
+
+Use `waitFor` to poll until a condition becomes truthy instead of hand-rolling
+poll loops. It accepts a CSS selector or a page function:
+
+```js
+await tab.waitFor(".feed-loaded", { timeoutMs: 15000, intervalMs: 300 });
+const ok = await tab.waitFor((args) => window.status === args.expected, {
+  expected: "ready"
+});
+```
+
+On timeout it throws `OpenBrowserUseWaitTimeoutError`, which carries the last
+observed value in `.lastValue`.
+
+## Finalizing Tabs
+
+`finalizeTabs` validates its keep entries locally with actionable errors:
+
+```js
+await browser.client.finalizeTabs([]); // close agent tabs / release user tabs
+await browser.client.finalizeTabs([
+  { tabId: 42, status: "handoff" }      // keep open, hand back to the user
+]);
+```
+
+Invalid entries (bare ids, unknown statuses) fail fast with the expected
+shape in the message instead of a confusing backend error.
 const text = await tab.domSnapshot();
 const value = await tab.evaluate("document.title");
 ```

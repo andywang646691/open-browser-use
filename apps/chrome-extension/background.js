@@ -331,14 +331,14 @@ class BrowserBackend {
   async finalizeTabs(params) {
     const session = await this.requireSession(params);
     if (!Array.isArray(params.keep)) {
-      throw new Error("finalizeTabs requires keep array");
+      throw new Error("finalizeTabs requires keep array of {tabId: number, status: \"handoff\" | \"deliverable\"}");
     }
     const tabs = await this.getSessionTabs(session.sessionId);
     const knownTabIds = new Set(tabs.filter(hasTabId).map((tab) => tab.id));
     const keep = new Map();
     for (const entry of params.keep) {
       if (!entry || typeof entry !== "object") {
-        throw new Error("finalizeTabs received invalid tab entry");
+        throw new Error("finalizeTabs received invalid tab entry; expected {tabId: number, status: \"handoff\" | \"deliverable\"}");
       }
       const tabId = requireTabId(entry, "finalizeTabs");
       if (!knownTabIds.has(tabId)) {
@@ -349,7 +349,7 @@ class BrowserBackend {
       }
       const status = entry.status;
       if (status !== "handoff" && status !== "deliverable") {
-        throw new Error(`finalizeTabs received invalid status ${String(status)}`);
+        throw new Error(`finalizeTabs received invalid status ${JSON.stringify(status)}; expected "handoff" or "deliverable"`);
       }
       keep.set(tabId, status);
     }

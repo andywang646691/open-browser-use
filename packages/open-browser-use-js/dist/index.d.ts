@@ -24,6 +24,45 @@ export type OpenBrowserUseWaitForLoadStateOptions = {
     state?: OpenBrowserUseLoadState;
     timeoutMs?: number;
 };
+export type FinalizeKeepEntry = {
+    tabId: number;
+    status: "handoff" | "deliverable";
+};
+export type CdpCommandResult = {
+    [key: string]: JsonValue;
+};
+export type EvaluatePageFunction<A, T> = (args: A) => T | Promise<T>;
+export type EvaluateOptions = {
+    awaitPromise?: boolean;
+};
+export type WaitForOptions = {
+    timeoutMs?: number;
+    intervalMs?: number;
+    awaitPromise?: boolean;
+};
+export declare class OpenBrowserUseEvaluateError extends Error {
+    readonly tabId: number;
+    readonly expression: string;
+    constructor(message: string, details: {
+        tabId: number;
+        expression: string;
+    });
+}
+export declare class OpenBrowserUseWaitTimeoutError extends Error {
+    readonly tabId: number;
+    readonly condition: string;
+    readonly lastValue: JsonValue;
+    constructor(message: string, details: {
+        tabId: number;
+        condition: string;
+        lastValue: JsonValue;
+    });
+}
+export declare function serializePageFunction<A>(pageFunction: Function, args?: A): string;
+export declare function formatEvaluateError(response: {
+    [key: string]: JsonValue;
+} | null | undefined, fallback: string): string;
+export declare function assertFinalizeKeep(keep: unknown): asserts keep is FinalizeKeepEntry[];
 export type OpenBrowserUseBrowserOptions = OpenBrowserUseClientOptions | {
     client: OpenBrowserUseClient;
 };
@@ -44,11 +83,11 @@ export declare class OpenBrowserUseClient {
     getUserTabs(): Promise<JsonValue>;
     getUserHistory(params?: BrowserUseRequestParams): Promise<JsonValue>;
     claimUserTab(tabId: number): Promise<JsonValue>;
-    finalizeTabs(keep: JsonValue[]): Promise<JsonValue>;
+    finalizeTabs(keep?: FinalizeKeepEntry[]): Promise<JsonValue>;
     nameSession(name: string): Promise<JsonValue>;
     attach(tabId: number): Promise<JsonValue>;
     detach(tabId: number): Promise<JsonValue>;
-    executeCdp(tabId: number, method: string, commandParams?: BrowserUseRequestParams): Promise<JsonValue>;
+    executeCdp(tabId: number, method: string, commandParams?: BrowserUseRequestParams): Promise<CdpCommandResult>;
     moveMouse(tabId: number, x: number, y: number, waitForArrival?: boolean): Promise<JsonValue>;
     waitForFileChooser(tabId: number, timeoutMs?: number): Promise<JsonValue>;
     setFileChooserFiles(fileChooserId: string, files: string[]): Promise<JsonValue>;
@@ -82,9 +121,12 @@ export declare class OpenBrowserUseTab {
     goto(url: string, options?: OpenBrowserUseGotoOptions): Promise<JsonValue>;
     waitForLoadState(options?: OpenBrowserUseWaitForLoadStateOptions): Promise<void>;
     domSnapshot(): Promise<string>;
-    evaluate(expression: string, options?: {
-        awaitPromise?: boolean;
-    }): Promise<JsonValue>;
+    evaluate(expression: string, options?: EvaluateOptions): Promise<JsonValue>;
+    evaluate<A, T>(pageFunction: EvaluatePageFunction<A, T>, args?: A, options?: EvaluateOptions): Promise<T>;
+    /** Evaluate a raw JavaScript expression. Prefer the function form {@link evaluate} when possible. */
+    evaluateRaw(expression: string, options?: EvaluateOptions): Promise<JsonValue>;
+    waitFor(selector: string, options?: WaitForOptions): Promise<JsonValue>;
+    waitFor<A, T>(pageFunction: EvaluatePageFunction<A, T>, args?: A, options?: WaitForOptions): Promise<T>;
     close(): Promise<JsonValue>;
 }
 export declare class OpenBrowserUseTabPlaywright {
@@ -99,10 +141,9 @@ export declare class OpenBrowserUseCdp {
     constructor(client: OpenBrowserUseClient);
     call(tabId: number, method: string, commandParams?: BrowserUseRequestParams, options?: {
         timeoutMs?: number;
-    }): Promise<JsonValue>;
-    evaluate(tabId: number, expression: string, options?: {
-        awaitPromise?: boolean;
-    }): Promise<JsonValue>;
+        retried?: boolean;
+    }): Promise<CdpCommandResult>;
+    evaluate(tabId: number, expression: string, options?: EvaluateOptions): Promise<JsonValue>;
     navigate(tabId: number, url: string, options?: OpenBrowserUseGotoOptions): Promise<JsonValue>;
     waitForLoadState(tabId: number, options?: OpenBrowserUseWaitForLoadStateOptions): Promise<void>;
     readDocumentState(tabId: number): Promise<{
@@ -115,5 +156,7 @@ export declare class OpenBrowserUseCdp {
     }): Promise<OpenBrowserUseNotification>;
     waitForLoadEvent(tabId: number, state: OpenBrowserUseLoadState, timeoutMs: number): Promise<void>;
     ensureAttached(tabId: number): Promise<void>;
+    waitFor(tabId: number, selector: string, options?: WaitForOptions): Promise<JsonValue>;
+    waitFor<A>(tabId: number, pageFunction: Function, args?: A, options?: WaitForOptions): Promise<JsonValue>;
 }
 export declare function encodeFrame(value: JsonValue | Record<string, unknown>): Buffer;

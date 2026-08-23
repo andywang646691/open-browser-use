@@ -5,7 +5,15 @@ import { endianness, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { OpenBrowserUseClient, connectOpenBrowserUse, encodeFrame } from "../dist/index.js";
+import {
+  OpenBrowserUseClient,
+  OpenBrowserUseEvaluateError,
+  OpenBrowserUseWaitTimeoutError,
+  connectOpenBrowserUse,
+  encodeFrame,
+  formatEvaluateError,
+  serializePageFunction
+} from "../dist/index.js";
 
 test("encodes native-endian length-prefixed JSON frames", () => {
   const frame = encodeFrame({ id: 1, method: "getInfo" });
@@ -200,4 +208,234 @@ test("sends download and clipboard wrapper requests", async () => {
     await new Promise((resolve) => server.once("close", resolve));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function withMockServer(handler, run) {
+  const directory = await mkdtemp(join(tmpdir(), "obu-sdk-js-"));
+  const socketPath = join(directory, "obu.sock");
+  const server = createServer((socket) => {
+    let pending = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= 4) {
+        const length = endianness() === "LE" ? pending.readUInt32LE(0) : pending.readUInt32BE(0);
+        if (pending.length < 4 + length) {
+          return;
+        }
+        const request = JSON.parse(pending.subarray(4, 4 + length).toString("utf8"));
+        pending = pending.subarray(4 + length);
+        const response = handler(request);
+        socket.write(encodeFrame({ jsonrpc: "2.0", id: request.id, ...response }));
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    await run(socketPath);
+  } finally {
+    server.close();
+    await new Promise((resolve) => server.once("close", resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("serializePageFunction embeds source and JSON args", () => {
+  const expression = serializePageFunction((args) => document.querySelector(args.selector).innerText, {
+    selector: ".tweet"
+  });
+  assert.match(expression, /\(\(args\) => /);
+  assert.match(expression, /document\.querySelector\(args\.selector\)\.innerText/);
+  assert.ok(expression.endsWith('({"selector":".tweet"})'));
+  assert.throws(() => serializePageFunction("not a function"), /pageFunction must be a function/);
+  assert.throws(() => serializePageFunction(() => {}, { big: 1n }), /JSON-serializable/);
+});
+
+test("formatEvaluateError prefers exception description with stack", () => {
+  const message = formatEvaluateError(
+    {
+      exceptionDetails: {
+        text: "Uncaught",
+        exception: { description: "ReferenceError: foo is not defined\n    at <anonymous>:1:13" }
+      }
+    },
+    "evaluation failed"
+  );
+  assert.match(message, /ReferenceError: foo is not defined/);
+  assert.match(message, /<anonymous>:1:13/);
+  assert.equal(formatEvaluateError({ result: {} }, "fallback"), "fallback");
+  assert.match(
+    formatEvaluateError(
+      { exceptionDetails: { text: "Uncaught", url: "https://x.test/a.js", lineNumber: 3 } },
+      "boom"
+    ),
+    /Uncaught at https:\/\/x\.test\/a\.js:3/
+  );
+});
+
+test("finalizeTabs validates keep locally with actionable messages", () => {
+  const client = new OpenBrowserUseClient({ socketPath: "/nonexistent.sock" });
+  assert.throws(() => client.finalizeTabs([123]), /expected \{tabId: number, status: "handoff" \| "deliverable"\}/);
+  assert.throws(
+    () => client.finalizeTabs([{ tabId: 1, status: "keep" }]),
+    /invalid finalizeTabs keep status "keep"; expected "handoff" or "deliverable"/
+  );
+  assert.throws(() => client.finalizeTabs([{ tabId: 0, status: "handoff" }]), /positive integer/);
+  assert.throws(() => client.finalizeTabs(null), /keep must be an array/);
+});
+
+test("tab.evaluate accepts a page function with args", async () => {
+  let seen = null;
+  await withMockServer(
+    (request) => {
+      if (request.method === "attach") {
+        return { result: {} };
+      }
+      if (request.method === "executeCdp" && request.params.method === "Runtime.evaluate") {
+        seen = request.params.commandParams.expression;
+        return { result: { result: { value: 42 } } };
+      }
+      return { result: {} };
+    },
+    async (socketPath) => {
+      const browser = await connectOpenBrowserUse({ socketPath });
+      try {
+        const tab = browser.tab(42);
+        const value = await tab.evaluate((args) => args.a + args.b, { a: 40, b: 2 });
+        assert.equal(value, 42);
+        assert.ok(seen.endsWith('({"a":40,"b":2})'));
+      } finally {
+        browser.close();
+      }
+    }
+  );
+});
+
+test("evaluate throws OpenBrowserUseEvaluateError with the page stack", async () => {
+  await withMockServer(
+    (request) => {
+      if (request.method === "attach") {
+        return { result: {} };
+      }
+      if (request.method === "executeCdp" && request.params.method === "Runtime.evaluate") {
+        return {
+          result: {
+            exceptionDetails: {
+              text: "Uncaught",
+              exception: { description: "TypeError: x is not a function\n    at <anonymous>:1:1" }
+            }
+          }
+        };
+      }
+      return { result: {} };
+    },
+    async (socketPath) => {
+      const browser = await connectOpenBrowserUse({ socketPath });
+      try {
+        const tab = browser.tab(42);
+        await assert.rejects(
+          tab.evaluate("undefined.x()"),
+          (error) =>
+            error instanceof OpenBrowserUseEvaluateError &&
+            /TypeError: x is not a function/.test(error.message) &&
+            error.expression === "undefined.x()"
+        );
+        await assert.rejects(tab.evaluate(() => undefined.x()), OpenBrowserUseEvaluateError);
+      } finally {
+        browser.close();
+      }
+    }
+  );
+});
+
+test("call retries once when the debugger was detached", async () => {
+  let calls = 0;
+  await withMockServer(
+    (request) => {
+      if (request.method === "attach") {
+        return { result: {} };
+      }
+      if (request.method === "executeCdp" && request.params.method === "Runtime.evaluate") {
+        calls += 1;
+        if (calls === 1) {
+          return { error: { message: "Debugger unattached" } };
+        }
+        return { result: { result: { value: "ok" } } };
+      }
+      return { result: {} };
+    },
+    async (socketPath) => {
+      const browser = await connectOpenBrowserUse({ socketPath });
+      try {
+        const tab = browser.tab(42);
+        assert.equal(await tab.evaluate("1 + 1"), "ok");
+        assert.equal(calls, 2);
+      } finally {
+        browser.close();
+      }
+    }
+  );
+});
+
+test("waitFor polls a selector until it appears and returns the value", async () => {
+  let count = 0;
+  await withMockServer(
+    (request) => {
+      if (request.method === "attach") {
+        return { result: {} };
+      }
+      if (request.method === "executeCdp" && request.params.method === "Runtime.evaluate") {
+        const expression = request.params.commandParams.expression;
+        if (expression.includes("document.querySelector")) {
+          count += 1;
+          return { result: { result: { type: "boolean", value: count >= 2 } } };
+        }
+        return { result: { result: { type: "string", value: "page" } } };
+      }
+      return { result: {} };
+    },
+    async (socketPath) => {
+      const browser = await connectOpenBrowserUse({ socketPath });
+      try {
+        const tab = browser.tab(42);
+        const value = await tab.waitFor(".loaded", { intervalMs: 5, timeoutMs: 500 });
+        assert.equal(value, true);
+        assert.ok(count >= 2);
+      } finally {
+        browser.close();
+      }
+    }
+  );
+});
+
+test("waitFor times out with the last observed value", async () => {
+  await withMockServer(
+    (request) => {
+      if (request.method === "attach") {
+        return { result: {} };
+      }
+      if (request.method === "executeCdp" && request.params.method === "Runtime.evaluate") {
+        return { result: { result: { type: "boolean", value: false } } };
+      }
+      return { result: {} };
+    },
+    async (socketPath) => {
+      const browser = await connectOpenBrowserUse({ socketPath });
+      try {
+        const tab = browser.tab(42);
+        await assert.rejects(
+          tab.waitFor(".never", { intervalMs: 5, timeoutMs: 50 }),
+          (error) =>
+            error instanceof OpenBrowserUseWaitTimeoutError &&
+            /Timed out after 50ms/.test(error.message) &&
+            error.lastValue === false &&
+            error.condition === ".never"
+        );
+      } finally {
+        browser.close();
+      }
+    }
+  );
 });
