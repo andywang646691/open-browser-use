@@ -27,7 +27,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.1.41"
+const version = "0.1.42"
 const defaultChromeExtensionID = "bgjoihaepiejlfjinojjfgokghnodnhd"
 const defaultCLISessionID = "obu-cli"
 const defaultMCPSessionID = "obu-mcp"
@@ -69,6 +69,7 @@ func isNativeMessagingLaunch(args []string) bool {
 
 func newRootCommand() *cobra.Command {
 	var showVersion bool
+	var options socketOptions
 	root := &cobra.Command{
 		Use:           "open-browser-use",
 		Short:         "Open Browser Use native host and CLI",
@@ -79,10 +80,21 @@ func newRootCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), version)
 				return nil
 			}
+			// Python-style heredoc script mode: `obu <<'PY' ... PY`. Piped
+			// non-empty stdin is treated as a browser script; helpers are
+			// pre-imported and every produced value is printed as a JSON line.
+			output, handled, err := runPipedScript(cmd.InOrStdin(), options)
+			if err != nil {
+				return err
+			}
+			if handled {
+				return writeScriptOutput(cmd.OutOrStdout(), output)
+			}
 			return renderStartupStatus(cmd.OutOrStdout())
 		},
 	}
 	root.Flags().BoolVarP(&showVersion, "version", "v", false, "print version")
+	addSocketFlags(root, &options)
 	root.AddCommand(
 		newHostCommand(),
 		newSetupCommand(),
@@ -1094,15 +1106,30 @@ type socketOptions struct {
 }
 
 func addSocketFlags(cmd *cobra.Command, options *socketOptions) {
+	// Flags still win when passed explicitly; otherwise environment variables
+	// provide the defaults so state can be set once per task and forgotten.
 	if options.sessionID == "" {
-		options.sessionID = defaultCLISessionID
+		options.sessionID = envValue("OBU_SESSION_ID", defaultCLISessionID)
+	}
+	if options.browser == "" {
+		options.browser = os.Getenv("OBU_BROWSER")
+	}
+	if options.profile == "" {
+		options.profile = os.Getenv("OBU_PROFILE")
 	}
 	cmd.Flags().StringVar(&options.socketPath, "socket", "", "open-browser-use Unix socket path")
 	cmd.Flags().StringVar(&options.socketDir, "socket-dir", host.DefaultSocketDir, "directory containing active socket registry")
 	cmd.Flags().DurationVar(&options.timeout, "timeout", 10*time.Second, "request timeout")
 	cmd.Flags().StringVar(&options.sessionID, "session-id", options.sessionID, "browser session id used for tab grouping and cleanup")
-	cmd.Flags().StringVar(&options.browser, "browser", "", "browser selector (chrome, chrome-beta, bitbrowser, or display name)")
-	cmd.Flags().StringVar(&options.profile, "profile", "", "Chrome profile selector (directory name like \"Default\" / \"Profile 1\" or display name like \"Eva\")")
+	cmd.Flags().StringVar(&options.browser, "browser", options.browser, "browser selector (chrome, chrome-beta, bitbrowser, or display name)")
+	cmd.Flags().StringVar(&options.profile, "profile", options.profile, "Chrome profile selector (directory name like \"Default\" / \"Profile 1\" or display name like \"Eva\")")
+}
+
+func envValue(name string, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func newCallCommand() *cobra.Command {

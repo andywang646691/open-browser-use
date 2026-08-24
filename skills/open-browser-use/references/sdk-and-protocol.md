@@ -241,14 +241,18 @@ Common Browser Use JSON-RPC methods:
 - `writeClipboard`
 - `turnEnded`
 
-CLI unrestricted call:
+CLI unrestricted access via the heredoc script mode (`cdp` and `evaluate`
+cover CDP; `call` remains for arbitrary JSON-RPC methods):
 
 ```sh
-open-browser-use call --session-id "$OBU_SESSION_ID" --method getInfo --params '{}'
-open-browser-use call --session-id "$OBU_SESSION_ID" --method executeCdp --params '{"target":{"tabId":123},"method":"Runtime.evaluate","commandParams":{"expression":"document.title"}}'
+obu <<'PY'
+info = cdp("Target.getTargets")
+print(len(info["targetInfos"]))
+finalize_tabs()
+PY
 ```
 
-CLI action plan:
+CLI action plan (`run` stays for shell/CI line lists):
 
 ```sh
 export OBU_SESSION_ID="obu-docs-scan-$(date +%Y%m%d%H%M%S)"
@@ -320,20 +324,18 @@ _, err := browser.Client.Request("executeCdp", obu.Params{
 
 ## User Tab Claiming
 
-1. List open user tabs with `open-browser-use user-tabs --session-id "$OBU_SESSION_ID"` or SDK `getUserTabs`.
+1. List open user tabs with `user_tabs()` in a script, `obu user-tabs`, or SDK `getUserTabs`.
 2. Select the tab from returned data using visible evidence: title, URL, recency, and group.
-3. Claim it with `open-browser-use claim-tab --session-id "$OBU_SESSION_ID" --tab-id <id>` or SDK `claimUserTab` / `claim_user_tab` / `ClaimUserTab`.
+3. Claim it with `claim_tab(id)` in a script, `obu claim-tab --tab-id <id>`, or SDK `claimUserTab` / `claim_user_tab` / `ClaimUserTab`.
 4. Use the returned controllable tab for later commands.
 
 Never invent or reuse stale tab ids.
 
 ## Tab Cleanup
 
-Before ending browser work, finalize exactly once for the active session:
-
-```sh
-open-browser-use finalize-tabs --session-id "$OBU_SESSION_ID" --keep '[]'
-```
+Before ending browser work, finalize exactly once for the active session.
+`finalize_tabs()` defaults to an empty keep list; the equivalent CLI form is
+`open-browser-use finalize-tabs` with no `--keep` flag.
 
 Omit tabs by default. Keep a tab only when the user needs that live page after
 the turn. Use `status: "deliverable"` for a user-facing output or requested

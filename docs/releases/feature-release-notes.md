@@ -1,5 +1,11 @@
 # 功能发布记录
 
+## 2026-08
+
+| 日期 | 功能域 | 用户价值 | 变更摘要 |
+| --- | --- | --- | --- |
+| 2026-08-24 | LLM-first Skill & CLI | Agent 不再需要现场学一套新词汇和 JSON/shell 转义；浏览器自动化主路径变成熟词的 CDP heredoc 脚本，状态一次 export 即可，收尾默认安全。 | 发布 `0.1.42` patch 版本，`skills/open-browser-use` 重写为 78 行瘦 skill（CDP 三原语 AX tree → box model → evaluate 驱动交互），新建 `references/tabs.md` 承接 tab 生命周期/文件选择器/下载/剪贴板细节；CLI 新增 `obu <<'PY'` stdin 脚本模式（`user_tabs`/`claim_tab`/`open_tab`/`navigate`/`history`/`cdp`/`evaluate`/`finalize_tabs` 等预导入 helper、结构化 kwargs、JSON 行输出、切片、元组解包、算术），实测确认后台 tab 上 `Input.dispatchMouseEvent` 事件会被丢弃，skill 因此以 `evaluate(js)` 为默认交互路径并保留 raw CDP 逃生口；`OBU_SESSION_ID`/`OBU_BROWSER`/`OBU_PROFILE` 环境变量作为 flag 默认值兜底，MCP 同样生效；`finalize-tabs` 缺省 keep 空已是安全默认，skill 不再教 JSON-in-shell 写法。 |
+
 ## 2026-07
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
