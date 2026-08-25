@@ -136,6 +136,53 @@ class PreludeTest(unittest.TestCase):
         self.assertEqual(request["params"]["target"], {"tabId": 42})
         self.assertIn("attach", [r["method"] for r in self.host.requests])
 
+    def test_claim_tab_tolerates_numeric_string(self):
+        # Regression: claim_tab("279925170") must behave like claim_tab(279925170)
+        # and send an int, so the extension never sees a string tabId.
+        self.sh.claim_tab("279925170")
+        request = self.last("claimUserTab")
+        self.assertEqual(request["params"]["tabId"], 279925170)
+        self.sh.cdp("DOM.getDocument")
+        request = self.last("executeCdp")
+        self.assertEqual(request["params"]["target"], {"tabId": 279925170})
+
+    def test_claim_tab_tolerates_padded_numeric_string(self):
+        self.sh.claim_tab("  42  ")
+        request = self.last("claimUserTab")
+        self.assertEqual(request["params"]["tabId"], 42)
+
+    def test_claim_tab_rejects_non_numeric_string(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self.sh.claim_tab("abc")
+        self.assertIn("claim_tab", str(ctx.exception))
+        self.assertIn("integer", str(ctx.exception))
+        # nothing was sent over the wire
+        self.assertEqual([r["method"] for r in self.host.requests], [])
+
+    def test_claim_tab_rejects_bool(self):
+        with self.assertRaises(RuntimeError):
+            self.sh.claim_tab(True)
+
+    def test_claim_tab_rejects_nonpositive(self):
+        with self.assertRaises(RuntimeError):
+            self.sh.claim_tab(0)
+        with self.assertRaises(RuntimeError):
+            self.sh.claim_tab(-3)
+
+    def test_navigate_tolerates_numeric_string(self):
+        self.sh.navigate("7", "https://example.com")
+        attach = self.last("attach")
+        self.assertEqual(attach["params"]["tabId"], 7)
+        request = self.last("executeCdp")
+        self.assertEqual(request["params"]["method"], "Page.navigate")
+        self.assertEqual(request["params"]["target"], {"tabId": 7})
+
+    def test_navigate_rejects_non_numeric_string(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self.sh.navigate("abc", "https://example.com")
+        self.assertIn("integer", str(ctx.exception))
+        self.assertEqual([r["method"] for r in self.host.requests], [])
+
     def test_open_tab_with_url_sequence(self):
         self.host.responses["createTab"] = {"id": 9, "url": ""}
         self.sh.open_tab("https://example.com")

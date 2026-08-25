@@ -90,6 +90,37 @@ def _request(method, params=None):
         return body.get("result")
 
 
+def _coerce_tab_id(tab_id, helper):
+    """Normalize a tab id to a positive int, tolerating numeric strings.
+
+    Chrome tab ids come back from user_tabs()/tabs() as ints, but scripts
+    sometimes hold them as strings (JSON round-trips, model output). Accept
+    both; reject anything else early with a message that points at
+    user_tabs(), instead of a cryptic "requires an integer tabId" from the
+    extension downstream.
+    """
+    if isinstance(tab_id, bool) or not isinstance(tab_id, (int, str)):
+        raise RuntimeError(
+            "obu {}: tab id must be an int (e.g. from user_tabs()), got {!r}".format(
+                helper, tab_id
+            )
+        )
+    if isinstance(tab_id, str):
+        digits = tab_id.strip()
+        if not digits.isdigit():
+            raise RuntimeError(
+                "obu {}: tab id must be an integer, got {!r}; list ids with user_tabs()".format(
+                    helper, tab_id
+                )
+            )
+        tab_id = int(digits)
+    if tab_id <= 0:
+        raise RuntimeError(
+            "obu {}: tab id must be a positive integer, got {!r}".format(helper, tab_id)
+        )
+    return tab_id
+
+
 def _attach(tab_id):
     _request("attach", {"tabId": tab_id})
 
@@ -115,11 +146,12 @@ def tabs():
 def claim_tab(tab_id):
     """Take over an existing Chrome tab for this session and make it current.
 
-    tab_id: int from user_tabs().
+    tab_id: int (or numeric string) from user_tabs().
     Returns the claimed tab object. Afterwards cdp()/evaluate() act on it.
 
-    Example: claim_tab(user_tabs()[0]["id"])"""
+    Example: claim_tab(user_tabs()[0]["id"]) / claim_tab("279925170")"""
     global _CURRENT_TAB
+    tab_id = _coerce_tab_id(tab_id, "claim_tab")
     result = _request("claimUserTab", {"tabId": tab_id})
     _CURRENT_TAB = tab_id
     return result
@@ -154,9 +186,11 @@ def open_tab(url=""):
 def navigate(tab_id, url):
     """Navigate an existing session tab to url (attaches it first).
 
+    tab_id: int (or numeric string) of a session tab.
     Returns the Page.navigate result. Prefer open_tab(url) for new tabs.
 
     Example: navigate(tab_id, "https://example.com")"""
+    tab_id = _coerce_tab_id(tab_id, "navigate")
     _attach(tab_id)
     return _request(
         "executeCdp",

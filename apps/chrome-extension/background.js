@@ -448,8 +448,10 @@ class BrowserBackend {
   async executeCdp(params) {
     await this.requireSession(params);
     const target = params.target && typeof params.target === "object" ? params.target : {};
-    const tabId = target.tabId;
-    if (typeof tabId === "number") {
+    const tabId = target.tabId != null ? requireTabId(target, "executeCdp") : undefined;
+    if (tabId !== undefined) {
+      // Normalize numeric strings so chrome.debugger.sendCommand gets an int.
+      target.tabId = tabId;
       await this.requireSessionTab({ ...params, tabId }, "executeCdp");
       if (!this.attachedTabs.has(tabId)) {
         throw new Error("Debugger unattached");
@@ -1153,10 +1155,19 @@ function toUserTab(tab, groupTitles) {
 }
 
 function requireTabId(params, command) {
-  if (!Number.isInteger(params.tabId)) {
-    throw new Error(`${command} requires an integer tabId`);
+  const raw = params.tabId;
+  // Tolerate numeric strings ("42", " 42 ") from heredoc scripts, SDKs or
+  // models that round-trip tab ids through JSON; keep plain ints untouched
+  // and reject anything else with a message that shows what was received.
+  if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
+    return Number(raw.trim());
   }
-  return params.tabId;
+  if (!Number.isInteger(raw)) {
+    throw new Error(
+      `${command} requires an integer tabId; got ${JSON.stringify(raw)}`
+    );
+  }
+  return raw;
 }
 
 async function createBackgroundTab() {
