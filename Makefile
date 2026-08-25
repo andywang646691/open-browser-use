@@ -1,11 +1,15 @@
 PROJECT ?=
 SLUG ?=
 
-.PHONY: init check-docs check-repo ci release-package new-history new-plan
+.PHONY: init check-docs check-repo ci release-package new-history new-plan local-install
 
 init:
 	@if [ -z "$(PROJECT)" ]; then echo "用法: make init PROJECT=项目名"; exit 1; fi
 	./scripts/init-project.sh "$(PROJECT)"
+
+# 构建当前 Go 源码为本地 obu 并替换全局安装 (开发时快速测试用)
+local-install:
+	./scripts/install-local.sh
 
 check-docs:
 	./scripts/check-docs.sh
