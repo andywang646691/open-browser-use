@@ -19,13 +19,11 @@
   `gh release create --generate-notes`，交给 GitHub 自动生成 `What's Changed`、
   `New Contributors` 和 `Full Changelog`。
 - `npm-publish.yml`：tag `v*` 推送触发的 npm 发布流水线，使用 npm
-  trusted publishing/OIDC 发布 `packages/open-browser-use-cli` 和
-  `packages/open-browser-use-js`。`open-browser-use` 是二进制 CLI 分发入口，
-  `open-browser-use-sdk` 是 JavaScript/TypeScript SDK，不发布 Chrome
-  extension。
-- `pypi-publish.yml`：tag `v*` 推送或手动触发的 PyPI 发布流水线，使用 PyPI
-  trusted publishing/OIDC 发布 `packages/open-browser-use-python`，distribution
-  名为 `open-browser-use-sdk`，Python import 模块名仍是 `open_browser_use`。
+  trusted publishing/OIDC 发布 `packages/open-browser-use-cli`。
+  `open-browser-use` 是二进制 CLI 分发入口，不发布 Chrome extension。
+  JS SDK / Python SDK / MCP server 已停止对外发布，源码保留在仓库内。
+- `pypi-publish.yml` 已删除：Python SDK 不再对外发布，源码保留在
+  `packages/open-browser-use-python/`。
 - `homebrew-publish.yml`：tag `v*` 推送触发的 Homebrew tap 更新流水线，等待
   GitHub Release 中的 CLI 预编译 tarball 出现后，用真实 asset sha256 渲染
   `open-browser-use` binary formula 并推送到 `iFurySt/homebrew-open-browser-use`。
@@ -46,12 +44,11 @@
 1. 保留 `ci.yml`，作为唯一默认常驻的仓库基础门禁。
 2. 在 `scripts/ci.sh` 里继续叠加项目自己的验证命令。
 3. 用真实构建产物替换 `scripts/release-package.sh`。
-4. CLI 和 JS SDK 的 npm 发布走 `npm-publish.yml`，两个包的 trusted
-   publisher 都要配置为 `iFurySt/open-browser-use` + `npm-publish.yml`。
-5. Python SDK 的 PyPI 发布走 `pypi-publish.yml`。首次发布前在 PyPI 账号
-   Publishing 页面创建 pending trusted publisher：project name
-   `open-browser-use-sdk`，owner `iFurySt`，repository
-   `open-browser-use`，workflow `pypi-publish.yml`，environment `pypi`。
+4. CLI 的 npm 发布走 `npm-publish.yml`，trusted publisher 配置为
+   `iFurySt/open-browser-use` + `npm-publish.yml`。
+5. ~~Python SDK 的 PyPI 发布~~ 已下线：SDK 不再对外发布，`pypi-publish.yml`
+   已删除，源码保留在仓库内；如要恢复，再在 PyPI 账号 Publishing 页面创建
+   pending trusted publisher 并重新加回 workflow。
 6. Homebrew 发布走 `homebrew-publish.yml`，需要仓库 secret
    `HOMEBREW_TAP_TOKEN` 能写入 tap repo。
 7. 浏览器插件发布走 `docs/CHROME_WEB_STORE_RELEASE.md` 里的 Chrome Web

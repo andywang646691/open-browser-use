@@ -184,6 +184,10 @@
   - `skills/open-browser-use/SKILL.md` 新增 "Multi-profile handling" 章节，覆盖 1/N profile 分支、selector 接受 directory/displayName、错误处理、MCP 启动锁定、不跨任务记忆 profile 选择。
 - [ ] M6 文档与发布
   - 待补：`docs/ARCHITECTURE.md` profile 选择段落 + 用户面 changelog + history。
+- 2026-08-24：MCP / SDK 对外模式下线（源码保留）——`obu mcp` 从 CLI 注册移除，
+  npm SDK / PyPI 发布流水线下线，skill 与 README 不再宣传 MCP/SDK。本节 M4 中的
+  `obu mcp --profile` 与延期的 SDK profile 选项（TC-9）随之下线；源码仍在仓库内，
+  将来恢复对外能力时再评估其实现方式。
 
 ## 决策记录
 

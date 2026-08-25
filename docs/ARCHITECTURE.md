@@ -4,8 +4,9 @@
 Chrome 浏览器自动化基础设施。
 
 当前 `main` 分支只保留 Chrome route：MV3 Chrome extension + Go native
-messaging host + SDK。这条路线用于接管用户真实 Chrome profile 中的 tabs、
-debugger、history 和 tab groups。
+messaging host + CLI。JS/Python/Go SDK 与 MCP server 的源码仍保留在仓库内
+并被测试覆盖，但不再对外暴露：不发布到 npm/PyPI，`obu mcp` 已从 CLI 下线，
+README 与 skill 不再宣传这两种模式。
 
 已完成的 Chrome route 执行计划：
 
@@ -32,13 +33,12 @@ debugger、history 和 tab groups。
 - `packages/open-browser-use-cli/`：npm 上发布的 `open-browser-use` 二进制
   CLI 包，暴露 `open-browser-use` 和 `obu` 两个命令，发布时只打包 Go CLI
   预构建二进制，不打包 Chrome extension。
-- `packages/open-browser-use-js/`：JavaScript/TypeScript SDK，npm distribution
-  名为 `open-browser-use-sdk`。
-- `packages/open-browser-use-python/`：Python SDK，PyPI distribution 名为
-  `open-browser-use-sdk`，import 模块名为 `open_browser_use`。
-- `packages/open-browser-use-go/`：Go SDK，Go import path 为
-  `github.com/ifuryst/open-browser-use/packages/open-browser-use-go`，package
-  name 为 `obu`。
+- `packages/open-browser-use-js/`：JavaScript/TypeScript SDK 源码（内部保留，
+  不再发布到 npm）。
+- `packages/open-browser-use-python/`：Python SDK 源码（内部保留，不再发布
+  到 PyPI），import 模块名为 `open_browser_use`。
+- `packages/open-browser-use-go/`：Go SDK 源码（内部保留，不再作为对外
+  import path 宣传），package name 为 `obu`。
 - `skills/open-browser-use/`：面向 AI Agent 的 Open Browser Use skill，说明
   如何安装、验证和使用浏览器插件、CLI、SDK 与 Browser Use 风格协议。
 - `packages/`：其他跨应用复用的库、契约和共享能力。
@@ -60,7 +60,7 @@ debugger、history 和 tab groups。
 Chrome route 的目标拓扑：
 
 ```text
-upper-layer runtime / SDK / CLI
+upper-layer runtime / CLI
   -> /tmp/open-browser-use/<uuid>.sock
   -> open-browser-use Go native host
   -> Chrome Native Messaging stdio
@@ -85,7 +85,7 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
 - `open-browser-use host`：启动 Chrome native messaging stdio 到 SDK Unix
   socket 的中继；默认 socket 路径是
   `/tmp/open-browser-use/<uuid>.sock`，并写入
-  `/tmp/open-browser-use/active.json` 供 CLI/SDK 自动发现当前活跃 socket。
+  `/tmp/open-browser-use/active.json` 供 CLI 自动发现当前活跃 socket。
   Chrome native messaging 以 `chrome-extension://...` origin 参数启动二进制时，
   CLI 会自动进入 host mode。
 - 无参数运行 `open-browser-use` 或 `obu` 输出 CLI 版本、浏览器插件检测状态、
@@ -188,8 +188,7 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   文件，对每个连通的 socket 调用 `getInfo`，把
   `metadata.extensionInstanceId` 反查到 browser/profile（grep 每个支持 browser
   root 的 `Local Extension Settings/<extension-id>/*.{log,ldb}`），按 selector
-  选出匹配 socket。`obu mcp --browser ... --profile ...` 在 MCP server 启动时锁定
-  selector，每次工具调用复用同一个解析结果。selector 不匹配时 CLI 列出当前已连通
+  选出匹配 socket。selector 不匹配时 CLI 列出当前已连通
   target 列表，提示用户打开对应 browser/profile。Windows 当前覆盖 Chrome
   Stable 和 Chrome Beta 的 `%LOCALAPPDATA%\Google\...\User Data` roots；BitBrowser
   root 仍只在 macOS 路径中自动发现。未显式选择时仍保留
@@ -222,22 +221,19 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   暴露给 SDK；agent-facing Browser Use command rewrite 还覆盖 DOM CUA、media
   download、element info/screenshot、locator bulk reads、generic tab export 和
   clipboard commands。
-- JS、Python 和 Go SDK：直接连接 Unix socket 发送 Browser Use JSON-RPC。
-  JS SDK 支持订阅 native socket 上的 JSON-RPC notification；Python SDK 会在
-  同步 request loop 中分发并跳过 notification，避免 CDP event 插队破坏响应读取；
-  Go SDK 同样在同步 request loop 中分发 notification，并可自动读取 active
-  socket registry。三个 SDK 都在原子 client 之外提供高层 browser/tab API，可直接使用
-  `tab.goto`、`tab.waitForLoadState`/`tab.wait_for_load_state` 和
-  `tab.playwright.domSnapshot`/`tab.playwright.dom_snapshot` 这类 Browser Use
-  风格封装；Python SDK 还提供 `title`、`url`、`wait_for_timeout` 和
-  `locator(...).inner_text(...)` 等适合 Jupyter/Python REPL 编排的薄封装，Go SDK
-  提供对应的 `Title`、`URL`、`WaitForTimeout` 和 `Locator(...).InnerText(...)`
-  helper。三个 SDK 同时提供核心 Browser Use method wrappers、download/clipboard
-  convenience wrappers，也保留 unrestricted `request`。
+- JS、Python 和 Go SDK（源码保留在 `packages/open-browser-use-js|python|go`）：
+  三个 SDK 直接连接 Unix socket 发送 Browser Use JSON-RPC（JS 支持订阅
+  notification，Python/Go 在同步 request loop 中分发并跳过 notification，
+  Go 可自动读取 active socket registry），在原子 client 之外提供高层
+  browser/tab API（`tab.goto`、`tab.waitForLoadState`、
+  `tab.playwright.domSnapshot` 等 Browser Use 风格封装）以及
+  download/clipboard convenience wrappers 和 unrestricted `request`。
+  当前不对外发布：不刊登 npm/PyPI，README 与 skill 不再宣传；需要恢复
+  对外能力时重新开启发布流水线即可。
 
-当前 SDK 不内置 Codex 风格的站点限制、turn policy 或二次确认。上层应用
-可以自由调用；生产集成如果需要安全策略，应在上层 runtime 或 host 前置网关
-中实现。
+仓库内保留的 SDK/MCP 实现不内置 Codex 风格的站点限制、turn policy 或二次
+确认。上层应用可以自由调用；如果将来恢复对外暴露，生产集成需要的安全策略
+应在上层 runtime 或 host 前置网关中实现。
 
 ## 新项目需要补齐的内容
 

@@ -3,9 +3,6 @@
 [![English](https://img.shields.io/badge/English-Click-yellow)](./README.md)
 [![简体中文](https://img.shields.io/badge/简体中文-点击查看-orange)](./README.zh-CN.md)
 [![Release](https://img.shields.io/github/v/release/iFurySt/open-browser-use)](https://github.com/iFurySt/open-browser-use/releases)
-[![npm SDK](https://img.shields.io/npm/v/open-browser-use-sdk?label=npm%20SDK)](https://www.npmjs.com/package/open-browser-use-sdk)
-[![PyPI SDK](https://img.shields.io/pypi/v/open-browser-use-sdk?label=PyPI%20SDK)](https://pypi.org/project/open-browser-use-sdk/)
-[![Go SDK](https://pkg.go.dev/badge/github.com/ifuryst/open-browser-use/packages/open-browser-use-go.svg)](https://pkg.go.dev/github.com/ifuryst/open-browser-use/packages/open-browser-use-go)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/iFurySt/open-browser-use)
 
 ---
@@ -13,7 +10,7 @@
 > [!TIP]
 > 对 Computer Use 感兴趣的话，可以看看 [open-computer-use](https://github.com/iFurySt/open-codex-computer-use)。
 
-`open-browser-use` 是平台中立的浏览器操作方案，也是Codex.app最新发布的Chrome Browser Use的开源替代方案。背后的故事可以看这篇[Browser Use详解](https://www.ifuryst.com/blog/2026/open-browser-use/)文章。 技术方案采用的是浏览器插件和open-browser-use cli结合，可通过 JS/Python/Go SDK 或 CLI 的方式接入。
+`open-browser-use` 是平台中立的浏览器操作方案，也是Codex.app最新发布的Chrome Browser Use的开源替代方案。背后的故事可以看这篇[Browser Use详解](https://www.ifuryst.com/blog/2026/open-browser-use/)文章。 技术方案采用的是浏览器插件和 open-browser-use CLI（`obu`）结合。
 
 https://github.com/user-attachments/assets/bcfba878-f6a8-44b9-b84b-29c7e0285687
 
@@ -49,22 +46,6 @@ open-browser-use setup
 
 ### 使用
 
-#### SDK
-
-```bash
-# JavaScript / TypeScript
-npm install open-browser-use-sdk
-
-# Python
-pip install open-browser-use-sdk
-
-# Go
-go get github.com/ifuryst/open-browser-use/packages/open-browser-use-go
-```
-
-SDK 在 npm 和 PyPI 上统一叫 `open-browser-use-sdk`。Python 代码里的 import
-模块名保持 `open_browser_use`；Go 代码通常把 SDK import 为 `obu`。
-
 #### Skill
 
 一键安装 skill：
@@ -91,26 +72,6 @@ npx skills upgrade open-browser-use -g -y
 也可以手动下载`open-browser-use`的[skill](./skills/open-browser-use)并安装，就可以愉快的开始使用了🚀
 
 *[GitHub Releases](https://github.com/iFurySt/open-browser-use/releases)里有可下载的.skill/.zip包*
-
-#### MCP
-
-一键安装 MCP server 到所有支持的全局 Agent 配置：
-
-```bash
-npx add-mcp "obu mcp" --name open_browser_use --all -g -y
-npx add-mcp list -g
-```
-
-也可以手动配置到支持本地 stdio MCP 的 Agent runtime：
-
-```toml
-[mcp_servers.open_browser_use]
-command = "obu"
-args = ["mcp"]
-```
-
-这个 MCP server 会暴露标签页列表、打开/接管标签页、导航、CDP、action plan
-和清理等浏览器工具。
 
 ## License
 

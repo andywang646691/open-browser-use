@@ -102,7 +102,9 @@ func newRootCommand() *cobra.Command {
 		newInstallManifestCommand(),
 		newCallCommand(),
 		newRunCommand(),
-		newMCPCommand(),
+		// MCP stdio server (cmd/open-browser-use/mcp.go) is intentionally not
+		// registered: the MCP mode is no longer exposed externally, but the
+		// source and its tests are kept in the repository.
 		newOpenTabCommand(),
 		newNavigateCommand(),
 		newSimpleRPCCommand("ping", "ping", "Ping the browser backend"),
