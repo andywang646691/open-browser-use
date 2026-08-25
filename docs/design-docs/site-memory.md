@@ -1,11 +1,12 @@
 # 站点经验沉淀 (Site Memory) 设计
 
-**状态**: 已定稿，待实现
+**状态**: 已实现（一期落地完成，见 §13）
 **摘要**: 把每次 OBU 访问页面的经验沉淀为按 domain 索引的原子数据层，
 供下一次 Agent 复用；skill 数量永久锁定为 1，经验增长只发生在数据，
 永不产生站点级 skill。
-**关联**: `skills/open-browser-use/`（skill 集成）、
-`cmd/open-browser-use/script_helpers.py`（唯一的写 helper）
+**关联**: `skills/open-browser-use/`（skill 集成 → references/memory.md + SKILL 一节）、
+`cmd/open-browser-use/script_helpers.py`（唯一的写 helper `memory_put`）、
+`scripts/obu-memory-check.sh`（机械校验）
 
 ---
 
@@ -385,11 +386,13 @@ tools/ + browser-tools/，运行时 `site.learnContext(url)` 按域匹配、`sit
 不吸收的部分：manifest + 工具 + 行为测试的包结构（正好对应本设计
 「一行捕获 + 手动聚合升级」的升级层，见 §5 / §7）。
 
-## 13. 一期实现清单（按本设计一次落地，含上节吸收项）
+## 13. 一期落地（已完成）
 
 1. `skills/open-browser-use/references/memory.md` — 格式、路径、grep 写法、
-   决策树、每类一个完整示例、`memory_put` 用法。
-2. `SKILL.md` 新增「经验沉淀」一节（见 §9）。
-3. `cmd/open-browser-use/script_helpers.py` 新增 `memory_put(...)`（~15 行）。
-4. 可选：`scripts/obu-memory-check.sh`（~30 行，机械校验含 runbook header 必填项）。
-5. 记一份 `docs/histories/` history。
+   决策树、每类一个完整示例、`memory_put` 用法（随 skill 包分发）。
+2. `skills/open-browser-use/SKILL.md` 新增「Experience memory」一节（见 §9）。
+3. `cmd/open-browser-use/script_helpers.py` 新增 `memory_put(...)`（~70 行含
+   docstring）+ 注册进 `_help()`；Go 测试 `script_test.go` 新增 3 个用例。
+4. `scripts/obu-memory-check.sh`（机械校验：行格式/kind/临时 ref/密钥/
+   索引预算/runbook header）。
+5. `docs/histories/2026-08/20260825-*.md` history 记录。
