@@ -44,6 +44,10 @@ headings = [n for n in tree if n["role"]["value"] == "heading"]  # real Python
 finalize_tabs()                   # keep empty by default
 PY
 ```
+- Each heredoc run is a fresh process: the current-tab pointer does not carry
+  over between runs — only tab membership persists via `OBU_SESSION_ID`.
+  Start every script with `claim_tab(id)` or `open_tab(url)` before any
+  `cdp()`/`evaluate()`.
 - Every helper documents its signature and return shape in its docstring:
   unsure, call `help(name)` or `_help()` inside the script — the contract is
   always available at runtime.

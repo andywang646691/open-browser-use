@@ -320,7 +320,7 @@ class BrowserBackend {
     if (typeof tab.groupId === "number" && tab.groupId !== -1) {
       const owner = await this.store.findSessionByGroup(tab.groupId);
       if (owner && owner.sessionId !== session.sessionId) {
-        throw new Error(`Tab ${tabId} is already part of browser session ${owner.sessionId}`);
+        throw new Error(`Tab ${tabId} is already part of browser session ${owner.sessionId}; to resume that session set OBU_SESSION_ID=${owner.sessionId}, or finalize it from the owning agent first`);
       }
     }
     await this.ensureSessionGroup(session.sessionId, tab.id, "user");
