@@ -11,3 +11,5 @@
 ## 初始文档
 
 - `core-beliefs.md`
+- `site-memory.md`：OBU 站点经验沉淀（Site Memory）设计——把每次页面访问的
+  经验沉淀为按 domain 索引的数据层，skill 数量永锁 1，不产生站点级 skill。
