@@ -245,6 +245,65 @@ def finalize_tabs(keep=None):
     return _request("finalizeTabs", {"keep": list(keep or [])})
 
 
+def memory_put(domain, kind, note, unlock=None, selector=None, tech=None, runbook=None):
+    """Record one reusable fact about a site to the site memory store.
+
+    Appends one labeled line to ~/.open-browser-use/memory/site-memory.lines
+    (override the root with OBU_MEMORY_DIR). Read it back later by grepping
+    'domain=<domain>|' in that file. Append-only: never overwrites, and
+    concurrent puts never clobber each other.
+
+    kind: 'fail' (a trap you hit), 'surprise' (unexpected structure), or
+          'tip' (a hard-won positive pattern; use sparingly).
+    note: the actionable fact, one sentence. unlock: how you got past it
+          (required for kind fail/surprise).
+    selector / tech / runbook: optional links — a verified selector, the
+    techniques/<name>.md pattern this lines up with, or a runbooks/<name>.py
+    script. See references/memory.md for the full convention.
+    Field values must not contain '|'; domains are normalized (www. dropped,
+    lowercased). Raises ValueError on invalid input.
+
+    Example:
+        memory_put("x.com", kind="surprise",
+                   note="timeline is virtual-scroll, DOM renders only visible items",
+                   unlock="scrape network requests instead of scrolling",
+                   tech="virtual-scroll-throttle")
+    """
+    if kind not in ("fail", "surprise", "tip"):
+        raise ValueError("kind must be 'fail', 'surprise' or 'tip', got {!r}".format(kind))
+    note = str(note or "").strip()
+    if not note:
+        raise ValueError("note is required")
+    if kind in ("fail", "surprise") and not unlock:
+        raise ValueError("unlock is required for kind={!r}".format(kind))
+    domain = str(domain or "").strip().lower()
+    if not domain:
+        raise ValueError("domain is required")
+    if domain.startswith("www."):
+        domain = domain[len("www."):]
+    fields = [
+        ("domain", domain),
+        ("ts", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        ("kind", kind),
+        ("note", note),
+    ]
+    for label, value in (("unlock", unlock), ("selector", selector),
+                         ("tech", tech), ("runbook", runbook)):
+        if value is not None:
+            fields.append((label, str(value)))
+    for label, value in fields:
+        if "|" in value:
+            raise ValueError("{}= contains '|' (field separator); reword it".format(label))
+    memory_root = os.environ.get("OBU_MEMORY_DIR") or os.path.join(
+        os.path.expanduser("~"), ".open-browser-use", "memory")
+    os.makedirs(memory_root, exist_ok=True)
+    lines_path = os.path.join(memory_root, "site-memory.lines")
+    line = "|".join("{}={}".format(k, v) for k, v in fields)
+    with open(lines_path, "a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    return lines_path
+
+
 def _help():
     """Print every helper with its one-line signature (full details via help())."""
     names = [
@@ -257,6 +316,7 @@ def _help():
         "name_session",
         "cdp",
         "evaluate",
+        "memory_put",
         "finalize_tabs",
     ]
     print("obu helpers:")

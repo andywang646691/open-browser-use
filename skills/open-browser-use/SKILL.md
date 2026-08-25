@@ -63,6 +63,24 @@ PY
 Keep a tab only when the user needs the live page after the turn, e.g. `finalize_tabs(keep=[{"tabId": id, "status": "deliverable"}])`.
 No browser tools after. Details: [references/tabs.md](references/tabs.md).
 
+## Experience memory (site memory)
+Deposit each visit's hard-won knowledge so the next agent reuses it; the
+skill surface stays 1 and only data grows (never per-site skills). Store:
+`~/.open-browser-use/memory/` (override: `$OBU_MEMORY_DIR`). Plain files —
+no memory commands; read with your own tools, write via one helper.
+
+- Before a domain new to this session, pre-fetch: `grep "domain=<domain>|"
+  site-memory.lines` (+ playbook, runbooks, `tech=` links). Write a line at
+  wrap-up with `memory_put(...)`; introspect `help(memory_put)` for kinds.
+- On repeated failure (≥2 tries, or page normal but data/events silently
+  missing), unconditionally read the whole techniques/ index first — don't
+  guess keywords, don't grind more rounds.
+- Record only "expensive" knowledge: traps, surprises, unlocks, transferable
+  fixes, working code. Routine success isn't worth a row; no credentials.
+- Transferable fix → `techniques/<name>.md`; stable repeat flow →
+  `runbooks/<name>.py` (verified code + header, rerun `obu < file`).
+- Details, formats, decision tree, examples: [references/memory.md](references/memory.md).
+
 ## Hard rules
 - The user's real Chrome: never inspect cookies, passwords, session stores.
 - Ask before uploads, clipboard, form submits, purchases, sending, deleting, or other externally visible changes.

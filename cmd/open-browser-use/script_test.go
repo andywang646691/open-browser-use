@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -152,6 +154,86 @@ func TestScriptHelpIntrospectsHelpers(t *testing.T) {
 	}
 	if !strings.Contains(output, "Open a new session tab") {
 		t.Fatalf("open_tab docstring missing, output: %s", output)
+	}
+}
+
+func TestScriptMemoryPutAppendsLabeledLine(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	t.Setenv("OBU_MEMORY_DIR", dir)
+	output, err := runScript(strings.Join([]string{
+		`memory_put("x.com", kind="surprise",`,
+		`           note="timeline is virtual-scroll",`,
+		`           unlock="scrape network requests",`,
+		`           tech="virtual-scroll-throttle")`,
+		`print("ok")`,
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if strings.TrimSpace(output) != "ok" {
+		t.Fatalf("output = %q, want ok", output)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "site-memory.lines"))
+	if err != nil {
+		t.Fatalf("memory file not written: %v", err)
+	}
+	line := strings.TrimSpace(string(content))
+	for _, want := range []string{
+		"domain=x.com|",
+		"|kind=surprise|",
+		"|note=timeline is virtual-scroll",
+		"|unlock=scrape network requests",
+		"|tech=virtual-scroll-throttle",
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line missing %q: %s", want, line)
+		}
+	}
+}
+
+func TestScriptMemoryPutAppendOnlyAndNormalizesDomain(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	t.Setenv("OBU_MEMORY_DIR", dir)
+	if _, err := runScript(`memory_put("www.GitHub.com", kind="tip", note="first")` + "\n"); err != nil {
+		t.Fatalf("first put failed: %v", err)
+	}
+	if _, err := runScript(`memory_put("www.GitHub.com", kind="tip", note="second")` + "\n"); err != nil {
+		t.Fatalf("second put failed: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "site-memory.lines"))
+	if err != nil {
+		t.Fatalf("memory file not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 appended lines, got %d: %s", len(lines), content)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "domain=github.com|") {
+			t.Fatalf("domain not normalized: %s", line)
+		}
+	}
+}
+
+func TestScriptMemoryPutValidatesInput(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	t.Setenv("OBU_MEMORY_DIR", dir)
+	cases := []string{
+		`memory_put("x.com", kind="weird", note="n")`,    // invalid kind
+		`memory_put("x.com", kind="fail", note="n")`,     // missing unlock
+		`memory_put("x.com", kind="tip", note="pipe | in")`, // separator in note
+		`memory_put("", kind="tip", note="n")`,           // empty domain
+	}
+	for _, script := range cases {
+		var stderr bytes.Buffer
+		_, err := runPipedScript(strings.NewReader(script+"\n"), socketOptions{}, &bytes.Buffer{}, &stderr)
+		requireScriptExit(t, err, 1)
+		if !strings.Contains(stderr.String(), "ValueError") {
+			t.Fatalf("want ValueError for %q, stderr: %s", script, stderr.String())
+		}
 	}
 }
 
