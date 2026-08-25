@@ -156,25 +156,28 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   和清理范围时可以显式传 `--session-id`。它不是通用编程语言，适合 shell、
   CI 和轻量 agent 编排。
 - 无参数运行 `obu` 且 stdin 为管道输入（如 `obu <<'PY' ... PY` heredoc）时
-  进入 Python 风格脚本模式：helper 预导入（`user_tabs()`、`tabs()`、
-  `claim_tab(id)`、`open_tab(url)`、`navigate(tab_id, url)`、`history(query)`、
+  进入真 Python 脚本模式：Go CLI spawn 系统 `python3`，执行 go:embed 的
+  prelude（`cmd/open-browser-use/script_helpers.py`）与用户脚本拼接后的
+  源码；helper 预导入（`user_tabs()`、`tabs()`、`claim_tab(id)`、
+  `open_tab(url)`、`navigate(tab_id, url)`、`history(query)`、
   `name_session(name)`、`cdp("Domain.method", **kwargs)`、`evaluate(js)`、
-  `finalize_tabs(keep=[...])`、`len(...)`、`print(...)`），支持字面量、列表、
-  dict、下标与切片 `[0:5]`、元组解包赋值、算术运算（`+ - * / // %`、
-  一元负号）；CDP 参数以结构化 kwargs 传入，
-  由 runtime 负责编码，模型不写 JSON/shell 转义；每个产生值会作为一行
-  JSON 输出。`open_tab`/`claim_tab` 设置当前 tab，供后续 `cdp`/`evaluate`
+  `finalize_tabs(keep=[...])`），完整 Python 语言可用（if/for、列表推导、
+  f-string）；API 契约写在 helper docstring 中，脚本内
+  `help(name)`/`_help()` 可随时自省签名与返回结构；CDP 参数以结构化
+  kwargs 传入，由 Python runtime 编码，模型不写 JSON/shell 转义；
+  stdout/stderr 原样透传、python 退出码透传到 CLI。socket 由 Go 侧按
+  `--socket`/registry/profile 路由解析后经 `OBU_SCRIPT_SOCKET` 传给
+  prelude，prelude 直接用标准库走 Browser Use JSON-RPC frame 协议。
+  `open_tab`/`claim_tab` 设置当前 tab，供后续 `cdp`/`evaluate`
   复用；`finalize_tabs()` 缺省 keep 为空列表。
 - 会话、browser、profile 等状态提供环境变量默认值：`OBU_SESSION_ID`、
   `OBU_BROWSER`、`OBU_PROFILE` 在未显式传对应 flag 时作为默认值兜底，
-  flag 仍然优先；MCP server 同样读取 `OBU_SESSION_ID`。
-- `open-browser-use mcp` / `obu mcp`：stdio MCP server 入口，使用
-  newline-delimited JSON-RPC，完成 `initialize` 生命周期握手，并暴露
-  `tools/list` 与 `tools/call`。MCP tools 复用 CLI/runner 能力，包括
-  `user_tabs`、`open_tab`、`navigate`、`page_info`、`cdp`、
-  `run_action_plan`、`finalize_tabs` 和 unrestricted `call`，适合 Codex
-  等支持本地 MCP server 的 agent runtime 直接接入。
-- CLI 便捷子命令覆盖当前 SDK 核心能力：`ping`、`info`、`tabs`、
+  flag 仍然优先。
+- MCP 模式已下线：`cmd/open-browser-use/mcp.go` 的 stdio MCP server 源码
+  仍保留在仓库内且被测试覆盖，但 `newMCPCommand` 不再注册到 CLI，
+  `obu mcp` / `open-browser-use mcp` 不可用，README 与 skill 也不再有
+  MCP 指引。
+- CLI 便捷子命令覆盖当前核心能力：`ping`、`info`、`tabs`、
   `user-tabs`、`history`、`open-tab`、`navigate`、`claim-tab`、
   `finalize-tabs`、`name-session`、`cdp`、`move-mouse`、
   `wait-file-chooser`、`set-file-chooser-files`、`turn-ended`、`profiles`。

@@ -27,9 +27,10 @@ export OBU_PROFILE="<profile>"   # after the user chose one
 Don't switch browser/profile mid-task.
 
 ## Browser work
-Python-style heredoc scripts: helpers pre-imported, values passed
-positionally or as keyword args, results printed as JSON lines — no
-hand-written serialization:
+Real-Python heredoc scripts: helpers are pre-imported as plain Python
+functions, and the whole language works (if/for, comprehensions, f-strings).
+Values pass positionally or as keyword args — never hand-written
+serialization:
 
 ```sh
 obu <<'PY'
@@ -39,9 +40,13 @@ open_tab("https://example.com")   # sets the current tab
 tree = cdp("Accessibility.getFullAXTree")["nodes"]  # role / name / backendDOMNodeId
 print(evaluate("document.querySelector('h1').textContent"))
 evaluate("document.querySelector('a').click()")     # act via JS
+headings = [n for n in tree if n["role"]["value"] == "heading"]  # real Python
 finalize_tabs()                   # keep empty by default
 PY
 ```
+- Every helper documents its signature and return shape in its docstring:
+  unsure, call `help(name)` or `_help()` inside the script — the contract is
+  always available at runtime.
 - Find elements via the AX tree first; fall back to `evaluate(js)` when the
   tree lacks the element. Never guess tab ids.
 - Act via `evaluate(js)` — `.click()`, focus, set values — and verify after
@@ -50,7 +55,8 @@ PY
   scrolling or `Input.dispatchMouseEvent` (raw CDP, can be dropped on
   background tabs).
 - Other helpers: `navigate(tab_id, url)`, `history(query)`, `tabs()`,
-  `name_session(name)`, `len(...)`, slices like `tree[0:5]`.
+  `name_session(name)` — Python builtins like `len(...)` and slices
+  (`tree[0:5]`) work natively.
 
 ## End a task
 `finalize_tabs()` exactly once, last browser action; keep empty by default.

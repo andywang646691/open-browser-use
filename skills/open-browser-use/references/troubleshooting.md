@@ -75,6 +75,27 @@ If Chrome blocks local file access for the extension, ask the user to open `chro
 - Clipboard reads/writes should happen only for the user-requested task.
 - If the user is on a login, payment, approval, CAPTCHA, or destructive workflow, pause and ask before continuing.
 
+## Heredoc Script Crash: `TypeError: 'NoneType' object is not subscriptable`
+
+A heredoc script that navigates a fresh tab and then calls
+`cdp("Accessibility.getFullAXTree")["nodes"]` could crash with
+`TypeError: 'NoneType' object is not subscriptable` even though the
+`tabs[0]["id"]`-style setup lines succeeded.
+
+Cause: the extension forwards every CDP event as an id-less `onCDPEvent`
+notification (plus periodic `heartbeat` notifications), and the CLI relay
+broadcasts them to every connected client. The prelude used to read one
+frame per request without correlating ids, so during a heavy page load the
+pending events could be misread as the response — `cdp()` then returned
+`None`.
+
+The prelude now matches responses by request id and skips notification
+frames, so this is fixed in the current CLI. If you still see this crash,
+you are running a stale `obu` binary — rebuild/reinstall (e.g.
+`make local-install`). Note the no-matching-response symptom can also come
+from a genuinely missing CDP result; re-issue the `cdp()` call after the
+page settles.
+
 ## When To Escalate To The User
 
 Ask the user for help when:

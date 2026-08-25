@@ -41,6 +41,10 @@ const maxLevelDBScanBytes = 32 << 20
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var scriptExit *scriptExitError
+		if errors.As(err, &scriptExit) {
+			os.Exit(scriptExit.code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -80,15 +84,16 @@ func newRootCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), version)
 				return nil
 			}
-			// Python-style heredoc script mode: `obu <<'PY' ... PY`. Piped
-			// non-empty stdin is treated as a browser script; helpers are
-			// pre-imported and every produced value is printed as a JSON line.
-			output, handled, err := runPipedScript(cmd.InOrStdin(), options)
+			// Real-Python heredoc script mode: `obu <<'PY' ... PY`. Piped
+			// non-empty stdin is executed by python3 with the embedded prelude;
+			// helpers are pre-imported and API contracts live in their
+			// docstrings (call help(Name) inside the script to inspect).
+			handled, err := runPipedScript(cmd.InOrStdin(), options, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
 			if handled {
-				return writeScriptOutput(cmd.OutOrStdout(), output)
+				return nil
 			}
 			return renderStartupStatus(cmd.OutOrStdout())
 		},

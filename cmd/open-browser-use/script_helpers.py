@@ -1,0 +1,266 @@
+"""obu heredoc prelude — pre-imported helpers for `obu <<'PY' ... PY`.
+
+This module is embedded in the obu binary (go:embed) and executed together
+with the user's script inside a real Python interpreter, so the full Python
+language is available: if/for, comprehensions, f-strings, imports, etc.
+
+Every helper talks to the obu native host over the Browser Use JSON-RPC
+Unix socket (4-byte native-endian frame length + JSON payload). The socket
+path is resolved by the Go CLI and passed via OBU_SCRIPT_SOCKET.
+
+API contract lives in these docstrings: when unsure about a signature or a
+return shape, call help(name) or name.__doc__ inside your script.
+"""
+
+import json
+import os
+import socket
+import struct
+import sys
+import time
+
+_SESSION_ID = os.environ.get("OBU_SESSION_ID", "obu-cli")
+_TURN_ID = "{}-{}".format(_SESSION_ID, time.time_ns())
+_SOCKET_PATH = os.environ.get("OBU_SCRIPT_SOCKET", "")
+_SOCKET_ERROR = os.environ.get("OBU_SCRIPT_SOCKET_ERROR", "")
+_CONN = None
+_CURRENT_TAB = None
+_NEXT_REQ_ID = 0
+_TIMEOUT = float(os.environ.get("OBU_SCRIPT_TIMEOUT_SECONDS", "10"))
+
+
+def _read_exact(conn, count):
+    chunks = []
+    remaining = count
+    while remaining > 0:
+        chunk = conn.recv(remaining)
+        if not chunk:
+            raise RuntimeError("obu socket closed mid-frame")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _request(method, params=None):
+    """Send one JSON-RPC request and return the matching result payload.
+
+    Frames are matched by request id: notification frames (no id, e.g. the
+    relay's onCDPEvent/heartbeat broadcasts) and any other stray frames are
+    skipped, never misread as this request's result.
+    """
+    global _CONN, _NEXT_REQ_ID
+    if _SOCKET_ERROR:
+        raise RuntimeError("obu: " + _SOCKET_ERROR)
+    if not _SOCKET_PATH:
+        raise RuntimeError(
+            "no obu socket: env OBU_SCRIPT_SOCKET is empty (run through `obu`, not directly)"
+        )
+    if _CONN is None:
+        _CONN = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        _CONN.settimeout(_TIMEOUT)
+        try:
+            _CONN.connect(_SOCKET_PATH)
+        except OSError as exc:
+            raise RuntimeError("cannot connect to obu socket {}: {}".format(_SOCKET_PATH, exc))
+    _NEXT_REQ_ID += 1
+    request_id = "obu-script-{}".format(_NEXT_REQ_ID)
+    request = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": dict(params or {}),
+    }
+    request["params"].setdefault("session_id", _SESSION_ID)
+    request["params"].setdefault("turn_id", _TURN_ID)
+    payload = json.dumps(request).encode("utf-8")
+    _CONN.sendall(struct.pack("@I", len(payload)) + payload)
+    while True:
+        header = _read_exact(_CONN, 4)
+        length = struct.unpack("@I", header)[0]
+        body = json.loads(_read_exact(_CONN, length).decode("utf-8"))
+        if body.get("id") != request_id:
+            # Notifications (no id) or another client's frame: skip and keep
+            # reading until this request's response arrives.
+            continue
+        if "error" in body:
+            message = body["error"]
+            if isinstance(message, dict):
+                message = message.get("message", str(message))
+            raise RuntimeError("obu {}: {}".format(method, message))
+        return body.get("result")
+
+
+def _attach(tab_id):
+    _request("attach", {"tabId": tab_id})
+
+
+def user_tabs():
+    """List the user's real Chrome tabs.
+
+    Returns a list of tab objects: [{"id": int, "url": str, "title": str, ...}].
+    Never guess tab ids — list first, then claim.
+
+    Example: tabs = user_tabs(); print(tabs[0]["id"])"""
+    return _request("getUserTabs")
+
+
+def tabs():
+    """List the current obu session's tabs.
+
+    Returns a list of session tab objects: [{"id": int, "url": str, "title": str}].
+    Only tabs opened/claimed in this session appear here."""
+    return _request("getTabs")
+
+
+def claim_tab(tab_id):
+    """Take over an existing Chrome tab for this session and make it current.
+
+    tab_id: int from user_tabs().
+    Returns the claimed tab object. Afterwards cdp()/evaluate() act on it.
+
+    Example: claim_tab(user_tabs()[0]["id"])"""
+    global _CURRENT_TAB
+    result = _request("claimUserTab", {"tabId": tab_id})
+    _CURRENT_TAB = tab_id
+    return result
+
+
+def open_tab(url=""):
+    """Open a new session tab (optional url) and make it current.
+
+    Returns the new tab object {"id": int, "url": str, ...}; the id is the
+    current tab for later cdp()/evaluate() calls.
+
+    Example: tab = open_tab("https://example.com")"""
+    global _CURRENT_TAB
+    tab = _request("createTab")
+    tab_id = tab.get("id")
+    if not isinstance(tab_id, int):
+        raise RuntimeError("createTab returned no numeric id: {!r}".format(tab))
+    _CURRENT_TAB = tab_id
+    if url:
+        _attach(tab_id)
+        _request(
+            "executeCdp",
+            {
+                "target": {"tabId": tab_id},
+                "method": "Page.navigate",
+                "commandParams": {"url": url},
+            },
+        )
+    return tab
+
+
+def navigate(tab_id, url):
+    """Navigate an existing session tab to url (attaches it first).
+
+    Returns the Page.navigate result. Prefer open_tab(url) for new tabs.
+
+    Example: navigate(tab_id, "https://example.com")"""
+    _attach(tab_id)
+    return _request(
+        "executeCdp",
+        {
+            "target": {"tabId": tab_id},
+            "method": "Page.navigate",
+            "commandParams": {"url": url},
+        },
+    )
+
+
+def history(query, limit=100):
+    """Search the user's Chrome history.
+
+    query: str substring match; limit: int (default 100).
+    Returns a list of history entries, newest first.
+
+    Example: history("browser use", limit=20)"""
+    return _request("getUserHistory", {"query": query, "limit": limit})
+
+
+def name_session(name):
+    """Name the current session's Chrome tab group (shown as the group title).
+
+    Example: name_session("Docs scan - OBU")"""
+    return _request("nameSession", {"name": name})
+
+
+def cdp(method, **params):
+    """Run a raw Chrome DevTools Protocol command on the current tab.
+
+    method: CDP domain.method, e.g. "Accessibility.getFullAXTree",
+    "DOM.getBoxModel", "Runtime.evaluate". params become the CDP command
+    params directly (use backendNodeId=123 style kwargs, never JSON strings).
+
+    Returns the CDP result object, e.g. cdp("Accessibility.getFullAXTree")
+    -> {"nodes": [{"role": {"value": "heading"}, "name": {"value": "..."},
+    "backendDOMNodeId": int, ...}]}.
+
+    Requires a current tab: call open_tab()/claim_tab() first.
+
+    Example: nodes = cdp("Accessibility.getFullAXTree")["nodes"]"""
+    if _CURRENT_TAB is None:
+        raise RuntimeError("no current tab: call open_tab(url) or claim_tab(id) first")
+    _attach(_CURRENT_TAB)
+    return _request(
+        "executeCdp",
+        {"target": {"tabId": _CURRENT_TAB}, "method": method, "commandParams": dict(params)},
+    )
+
+
+def evaluate(js):
+    """Run a JavaScript expression in the current tab and return its value.
+
+    js: str expression; returnByValue is set automatically. Use for DOM
+    reads and actions (.click(), focus, set value) that coordinates cannot
+    express. Raises on JS exceptions.
+
+    Example: text = evaluate("document.querySelector('h1').textContent")"""
+    if _CURRENT_TAB is None:
+        raise RuntimeError("no current tab: call open_tab(url) or claim_tab(id) first")
+    _attach(_CURRENT_TAB)
+    response = _request(
+        "executeCdp",
+        {
+            "target": {"tabId": _CURRENT_TAB},
+            "method": "Runtime.evaluate",
+            "commandParams": {"expression": js, "returnByValue": True},
+        },
+    )
+    if response.get("exceptionDetails"):
+        raise RuntimeError("evaluate threw: {!r}".format(response["exceptionDetails"]))
+    remote = response.get("result") or {}
+    return remote.get("value")
+
+
+def finalize_tabs(keep=None):
+    """Close the session's non-kept tabs. Call exactly once as the last step.
+
+    keep: list of {"tabId": int, "status": "deliverable"|"handoff"} tabs to
+    keep open; defaults to [] (close everything). Keep a tab only when the
+    user needs the live page after this turn.
+
+    Example: finalize_tabs()  # close all
+    Example: finalize_tabs(keep=[{"tabId": 123, "status": "deliverable"}])"""
+    return _request("finalizeTabs", {"keep": list(keep or [])})
+
+
+def _help():
+    """Print every helper with its one-line signature (full details via help())."""
+    names = [
+        "user_tabs",
+        "tabs",
+        "claim_tab",
+        "open_tab",
+        "navigate",
+        "history",
+        "name_session",
+        "cdp",
+        "evaluate",
+        "finalize_tabs",
+    ]
+    print("obu helpers:")
+    for name in names:
+        fn = globals()[name]
+        first_line = (fn.__doc__ or "").strip().splitlines()[0]
+        print("  {:<14} {}".format(name, first_line))
