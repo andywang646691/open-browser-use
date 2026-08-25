@@ -6,6 +6,9 @@ const HEARTBEAT_ALARM_NAME = "open-browser-use-heartbeat";
 const DEFAULT_CDP_TIMEOUT_MS = 10_000;
 const CURSOR_ARRIVAL_TIMEOUT_MS = 1_000;
 const MAX_USER_TABS = 1000;
+const ISOLATED_WINDOW_WIDTH = 1150;
+const ISOLATED_WINDOW_HEIGHT = 860;
+const ISOLATED_WINDOW_MARGIN = 24;
 const DEFAULT_SESSION_GROUP_TITLE = "Task - OBU";
 const DELIVERABLE_GROUP_TITLE = "✅ Open Browser Use";
 const LEGACY_SESSION_GROUP_TITLE_PATTERN = /^Open Browser Use [0-9a-f]{8}$/i;
@@ -188,7 +191,8 @@ class SessionStore {
       chromeGroupId: null,
       title: DEFAULT_SESSION_GROUP_TITLE,
       activeTabId: null,
-      tabOrigins: {}
+      tabOrigins: {},
+      windowId: null
     };
     this.state.sessions[sessionId] = created;
     await this.save();
@@ -258,10 +262,97 @@ class BrowserBackend {
 
   async createTab(params) {
     const session = await this.requireSession(params);
-    const chromeTab = await createBackgroundTab();
+    const sessionState = await this.store.getSession(session.sessionId);
+    let chromeTab;
+    if (await this.sessionUsesIsolatedWindow(sessionState, params)) {
+      const { win, created } = await this.ensureSessionWindow(sessionState);
+      if (created) {
+        // The window was just created and comes with its own about:blank start
+        // tab (URLs aside, windows always open with one tab). Reuse it as the
+        // session's first tab instead of adding a second, otherwise an untracked
+        // blank tab would linger and keep the owned window open at finalize.
+        chromeTab = (win.tabs ?? []).find(hasTabId) ?? null;
+      }
+      if (!chromeTab) {
+        chromeTab = await chrome.tabs.create({ windowId: win.id, active: false, url: "about:blank" });
+        if (!hasTabId(chromeTab)) {
+          throw new Error("Created session window tab has no id");
+        }
+      }
+    } else {
+      chromeTab = await createBackgroundTab();
+    }
     await this.ensureSessionGroup(session.sessionId, chromeTab.id, "agent");
     await this.setSessionActiveTab(session.sessionId, chromeTab.id);
     return { ...toBrowserTab(chromeTab), active: true };
+  }
+
+  // Isolated window model: a session that isolates owns exactly one Chrome
+  // window. Once session.windowId is set the session stays isolated regardless
+  // of later params (single-window invariant: tab groups cannot span windows).
+  // window_mode values: "isolated"/"minimized"/unset = isolated (default),
+  // "user" = legacy shared-window behavior (opt-in, e.g. driving a page the
+  // user has open).
+  async sessionUsesIsolatedWindow(sessionState, params) {
+    if (typeof sessionState.windowId === "number") {
+      return true;
+    }
+    return params.window_mode !== "user";
+  }
+
+  // Get-or-create the session's isolated window; never steals focus and stays
+  // out of the user's way (corner-sized, unfocused, non-minimized by default).
+  // Returns { win, created }: created is true when this call built the window
+  // (its start tab may then be reused by the caller).
+  async ensureSessionWindow(sessionState) {
+    if (typeof sessionState.windowId === "number") {
+      const win = await chrome.windows.get(sessionState.windowId).catch(() => null);
+      if (win && typeof win.id === "number") {
+        return { win, created: false };
+      }
+    }
+    const bounds = isolatedWindowBounds();
+    const createData = {
+      focused: false,
+      type: "normal",
+      url: "about:blank",
+      width: bounds.width,
+      height: bounds.height
+    };
+    if (bounds.left !== null) {
+      createData.left = bounds.left;
+    }
+    if (bounds.top !== null) {
+      createData.top = bounds.top;
+    }
+    const win = await chrome.windows.create(createData);
+    if (!win || typeof win.id !== "number") {
+      throw new Error("Created Chrome window has no id");
+    }
+    sessionState.windowId = win.id;
+    await this.store.save();
+    return { win, created: true };
+  }
+
+  // Move an existing tab into the session's isolated window (claims) so the
+  // session's tab group stays in one window.
+  async moveTabIntoSessionWindow(sessionState, tab) {
+    const { win } = await this.ensureSessionWindow(sessionState);
+    if (tab.windowId !== win.id) {
+      await chrome.tabs.move(tab.id, { windowId: win.id, index: -1 });
+    }
+    return win;
+  }
+
+  // A live user-facing window for deliverables kept at finalize: focused first,
+  // then any normal window, excluding the session's own isolated window.
+  async chooseUserWindowId(excludeWindowId = null) {
+    const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
+    const candidates = windows.filter(
+      (win) => typeof win.id === "number" && win.id !== excludeWindowId
+    );
+    const focused = candidates.find((win) => win.focused);
+    return focused?.id ?? candidates[0]?.id ?? null;
   }
 
   async getTabs(params) {
@@ -272,8 +363,14 @@ class BrowserBackend {
 
   async getUserTabs(params) {
     await this.requireSession(params);
+    const ownedWindows = new Set();
+    for (const session of Object.values(this.store.state.sessions)) {
+      if (session && typeof session.windowId === "number") {
+        ownedWindows.add(session.windowId);
+      }
+    }
     const tabs = (await chrome.tabs.query({}))
-      .filter(hasTabId)
+      .filter((tab) => hasTabId(tab) && !ownedWindows.has(tab.windowId))
       .sort(compareLastAccessed)
       .slice(0, MAX_USER_TABS);
     const groupTitles = await readGroupTitles(tabs);
@@ -322,6 +419,10 @@ class BrowserBackend {
       if (owner && owner.sessionId !== session.sessionId) {
         throw new Error(`Tab ${tabId} is already part of browser session ${owner.sessionId}; to resume that session set OBU_SESSION_ID=${owner.sessionId}, or finalize it from the owning agent first`);
       }
+    }
+    const sessionState = await this.store.getSession(session.sessionId);
+    if (await this.sessionUsesIsolatedWindow(sessionState, params)) {
+      await this.moveTabIntoSessionWindow(sessionState, tab);
     }
     await this.ensureSessionGroup(session.sessionId, tab.id, "user");
     await this.setSessionActiveTab(session.sessionId, tab.id);
@@ -394,6 +495,23 @@ class BrowserBackend {
     if (userTabsToRelease.length > 0 && chrome.tabs.ungroup) {
       await chrome.tabs.ungroup(userTabsToRelease.length === 1 ? userTabsToRelease[0] : userTabsToRelease);
     }
+    const sessionWindowId = typeof sessionState.windowId === "number" ? sessionState.windowId : null;
+    if (deliverableTabs.length > 0 && typeof sessionWindowId === "number") {
+      const sessionWindowTabIds = (
+        await chrome.tabs.query({ windowId: sessionWindowId }).catch(() => [])
+      )
+        .map((tab) => tab.id)
+        .filter((id) => typeof id === "number");
+      const inSessionWindow = deliverableTabs.filter((id) => sessionWindowTabIds.includes(id));
+      if (inSessionWindow.length > 0) {
+        const userWindowId = await this.chooseUserWindowId(sessionWindowId);
+        if (typeof userWindowId === "number") {
+          await chrome.tabs
+            .move(inSessionWindow, { windowId: userWindowId, index: -1 })
+            .catch(() => {});
+        }
+      }
+    }
     if (deliverableTabs.length > 0) {
       await this.moveToDeliverables(deliverableTabs);
     }
@@ -410,6 +528,19 @@ class BrowserBackend {
     } else {
       this.activeTabsBySession.delete(session.sessionId);
       await this.store.removeSession(session.sessionId);
+      // Session over and no handoffs left: close the owned window, but only
+      // when it is actually empty — never kill leftover user tabs in it.
+      if (typeof sessionWindowId === "number") {
+        const win = await chrome.windows.get(sessionWindowId).catch(() => null);
+        if (win && typeof win.id === "number") {
+          const remaining = (
+            await chrome.tabs.query({ windowId: sessionWindowId }).catch(() => [])
+          ).filter((tab) => typeof tab.id === "number");
+          if (remaining.length === 0) {
+            await chrome.windows.remove(sessionWindowId).catch(() => {});
+          }
+        }
+      }
     }
     // Report what actually happened so agents can verify instead of trusting
     // silence: a lost session store or dissolved tab group previously degraded
@@ -1220,6 +1351,30 @@ async function createBackgroundTab() {
     throw new Error("Created Chrome window has no tab");
   }
   return tab;
+}
+
+function isolatedWindowBounds() {
+  let availWidth = null;
+  let availHeight = null;
+  try {
+    availWidth = typeof screen !== "undefined" ? screen.availWidth : null;
+    availHeight = typeof screen !== "undefined" ? screen.availHeight : null;
+  } catch {
+    // screen unavailable in some extension contexts; fall back to defaults
+  }
+  const width = availWidth
+    ? Math.max(320, Math.min(ISOLATED_WINDOW_WIDTH, availWidth - ISOLATED_WINDOW_MARGIN * 2))
+    : ISOLATED_WINDOW_WIDTH;
+  const height = availHeight
+    ? Math.max(240, Math.min(ISOLATED_WINDOW_HEIGHT, availHeight - ISOLATED_WINDOW_MARGIN * 2))
+    : ISOLATED_WINDOW_HEIGHT;
+  const left = availWidth
+    ? Math.max(0, availWidth - width - ISOLATED_WINDOW_MARGIN)
+    : null;
+  const top = availHeight
+    ? Math.max(0, availHeight - height - ISOLATED_WINDOW_MARGIN)
+    : null;
+  return { width, height, left, top };
 }
 
 async function chooseWindowId() {

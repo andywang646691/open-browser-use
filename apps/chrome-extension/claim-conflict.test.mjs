@@ -173,7 +173,7 @@ async function run() {
 
   // A different session tries to claim the tab → must fail with a hint.
   await assert.rejects(
-    () => backend.claimUserTab({ session_id: "obu-new-task", turn_id: "turn-1", tabId }),
+    () => backend.claimUserTab({ session_id: "obu-new-task", turn_id: "turn-1", tabId, window_mode: "user" }),
     (error) => {
       const message = String(error.message);
       assert.ok(message.includes(`already part of browser session ${OLD_SESSION}`), `message should name the owning session, got: ${message}`);
@@ -184,7 +184,7 @@ async function run() {
   );
 
   // Same session re-claiming its own tab is fine (no conflict).
-  const reclaimed = await backend.claimUserTab({ session_id: OLD_SESSION, turn_id: "turn-1", tabId });
+  const reclaimed = await backend.claimUserTab({ session_id: OLD_SESSION, turn_id: "turn-1", tabId, window_mode: "user" });
   assert.equal(reclaimed.id, tabId, "owner session can re-claim its own tab");
 
   console.log("All claim-conflict tests passed.");

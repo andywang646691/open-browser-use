@@ -11,7 +11,9 @@
 ## 范围
 
 - 包含:
-  - **默认模式翻转**:`OBU_WINDOW_MODE` 语义改为——缺省即隔离;取值 `isolated`(默认,隔离非最小化)/ `minimized`(隔离且最小化,可选加强静默)/ `user`(旧行为,新标签页进用户聚焦窗口,显式退出隔离)
+  - **默认模式翻转**:`OBU_WINDOW_MODE` 语义改为——缺省即隔离;取值
+    `user` 显式退出隔离(旧行为,新标签页进用户聚焦窗口)。`minimized` 本轮
+    不实现(用户明确不要最小化)。
   - 扩展:session 级“拥有窗口”模型(get-or-create / 复用 / 失效重建 / finalize 关窗)
   - 扩展:claim 跨窗口时把标签页 move 进隔离窗口(维持 tab group 单窗口不变量)
   - 扩展:user_tabs() 排除属于 session 窗口的标签页(防止 agent 自 claim)
@@ -73,21 +75,25 @@
 
 ## 进度记录
 
-- [ ] 确认范围和约束。
-- [ ] 扩展侧实现(窗口模型 + claim + user_tabs 排除 + finalize 关窗)。
-- [ ] CLI/Python/SDK 透传。
-- [ ] 单测 + `make ci` 全量通过。
+- [x] 确认范围和约束。
+- [x] 扩展侧实现(窗口模型 + claim + user_tabs 排除 + finalize 关窗)。
+- [x] CLI/Python/SDK 透传。
+- [x] 单测 + `make ci` 全量通过。
 - [ ] 真浏览器冒烟验证。
-- [ ] SKILL/ARCHITECTURE 文档同步 + history 记录。
+- [x] SKILL/ARCHITECTURE 文档同步(history 记录随提交)。
 
 ## 决策记录
 
 - 2026-08-26:隔离语义持久化放在扩展 session 记录(`windowId`),而非每次请求参数——
   一旦会话建立隔离窗口,后续请求即使丢了 env 也保持一致,杜绝跨窗口组分裂。
 - 2026-08-26:不最小化(用户明确);用 `focused:false` + `active:false` + 底右下角小尺寸定位
-  实现“不打扰”。macOS Dock 闪动属平台行为,接受并在文档标注。`minimized` 保留为 env 可选值。
+  实现“不打扰”。macOS Dock 闪动属平台行为,接受并在文档标注。`minimized` 值本轮不实现,
+  需要时加一行 `state:"minimized"` 即可。
 - 2026-08-26:**隔离翻转默认**——`OBU_WINDOW_MODE` 缺省即 `isolated`;"不使用用户已有
   tab,除非用户要求"通过两层实现:技术上 claim_tab 始终是显式逐页动作(用户点名才发生),
   会话级显式退出用 `OBU_WINDOW_MODE=user`;指南上 SKILL.md 把“reuse 优先”改为“默认不 claim”。
 - 2026-08-26:deliverable 在 finalize 先 move 到用户可见窗口再入交付组,避免交付物
   藏在后台窗口里;窗口仅在为空时才关闭,绝不连带关掉残留用户 tab。
+- 2026-08-26:`windows.create` 自带一个初始 about:blank 标签页,不复用的话会残留为
+  无主空白页、导致 finalize 永远关不掉窗口——因此建窗后把初始 tab 直接复用作会话
+  第一个 tab(建窗时返回 created 标志,调用方复用 win.tabs[0])。

@@ -1434,12 +1434,17 @@ func newSetFileChooserFilesCommand() *cobra.Command {
 func newOpenTabCommand() *cobra.Command {
 	var options socketOptions
 	var url string
+	var windowMode string
 	cmd := &cobra.Command{
 		Use:   "open-tab",
 		Short: "Open a new browser session tab",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			tabResponse, err := invokeWithOptions(options, "createTab", map[string]any{})
+			params := map[string]any{}
+			if windowMode != "" {
+				params["window_mode"] = windowMode
+			}
+			tabResponse, err := invokeWithOptions(options, "createTab", params)
 			if err != nil {
 				return err
 			}
@@ -1466,6 +1471,7 @@ func newOpenTabCommand() *cobra.Command {
 	}
 	addSocketFlags(cmd, &options)
 	cmd.Flags().StringVar(&url, "url", "", "optional URL to navigate after tab creation")
+	cmd.Flags().StringVar(&windowMode, "window-mode", "", "tab window placement: isolated (default) or user")
 	return cmd
 }
 
@@ -2372,6 +2378,11 @@ func applySessionDefaults(params map[string]any, sessionID string) {
 	}
 	if _, ok := params["turn_id"]; !ok {
 		params["turn_id"] = fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano())
+	}
+	if _, ok := params["window_mode"]; !ok {
+		if mode := envValue("OBU_WINDOW_MODE", ""); mode != "" {
+			params["window_mode"] = mode
+		}
 	}
 }
 

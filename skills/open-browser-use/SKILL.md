@@ -23,6 +23,9 @@ State lives in env vars — set once, forget (flags still override):
 export OBU_SESSION_ID="obu-<task-slug>"
 export OBU_BROWSER="<browser>"   # after the user chose one
 export OBU_PROFILE="<profile>"   # after the user chose one
+# optional: opt out of the default isolated background window
+# ("user" = open tabs in the user's focused window like before)
+export OBU_WINDOW_MODE="user"
 ```
 Don't switch browser/profile/session_id mid-task.
 
@@ -58,8 +61,13 @@ guessing. This replaces the need for inline examples.
   pointer does not persist between runs — only tab membership persists via
   `OBU_SESSION_ID`. So reclaim or open a tab at the top of *every* script
   before any browser call.
-- **Tabs**: prefer reusing an already-open matching tab over opening a new one;
-  never guess tab ids — list them first, then act on one.
+- **Tabs**: never guess tab ids — list them first, then act on one. Session
+  tabs open in a dedicated background window by default: unfocused,
+  non-minimized, corner-sized, so the whole run never disturbs the user
+  (`OBU_WINDOW_MODE="user"` opts back into the shared-window flow). Don't
+  claim the user's existing tabs unless they explicitly asked for that page —
+  `user_tabs()` already excludes OBU's own window so session tabs can't be
+  mistaken for user tabs.
 - **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
   when the tree lacks the element.
 - **Act**: via `evaluate(js)` — click, focus, set values — and always verify the

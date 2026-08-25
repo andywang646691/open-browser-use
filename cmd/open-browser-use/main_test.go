@@ -1571,6 +1571,30 @@ func TestInvokeWithOptionsUsesSessionID(t *testing.T) {
 	}
 }
 
+func TestApplySessionDefaultsInjectsWindowMode(t *testing.T) {
+	t.Setenv("OBU_WINDOW_MODE", "user")
+	params := map[string]any{}
+	applySessionDefaults(params, "obu-window-mode")
+	if params["window_mode"] != "user" {
+		t.Fatalf("expected OBU_WINDOW_MODE env to inject window_mode, got %#v", params["window_mode"])
+	}
+	// an explicit window_mode always wins over the env default
+	explicit := map[string]any{"window_mode": "isolated"}
+	applySessionDefaults(explicit, "obu-window-mode")
+	if explicit["window_mode"] != "isolated" {
+		t.Fatalf("explicit window_mode should win over env, got %#v", explicit["window_mode"])
+	}
+}
+
+func TestApplySessionDefaultsLeavesWindowModeAbsentWithoutEnv(t *testing.T) {
+	t.Setenv("OBU_WINDOW_MODE", "")
+	params := map[string]any{}
+	applySessionDefaults(params, "obu-window-mode")
+	if _, ok := params["window_mode"]; ok {
+		t.Fatalf("expected no window_mode when env unset, got %q", params["window_mode"])
+	}
+}
+
 func testCRX(crxID []byte) []byte {
 	signedHeaderData := testProtoBytes(1, crxID)
 	header := testProtoBytes(10000, signedHeaderData)

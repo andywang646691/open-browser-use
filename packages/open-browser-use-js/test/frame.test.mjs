@@ -60,6 +60,47 @@ test("dispatches JSON-RPC notifications from the native socket", async () => {
   }
 });
 
+test("createTab forwards windowMode onto the wire as window_mode", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "obu-sdk-js-"));
+  const socketPath = join(directory, "obu.sock");
+  const calls = [];
+  const server = createServer((socket) => {
+    let pending = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= 4) {
+        const length = endianness() === "LE" ? pending.readUInt32LE(0) : pending.readUInt32BE(0);
+        if (pending.length < 4 + length) {
+          return;
+        }
+        const request = JSON.parse(pending.subarray(4, 4 + length).toString("utf8"));
+        pending = pending.subarray(4 + length);
+        calls.push(request.params);
+        socket.write(encodeFrame({ jsonrpc: "2.0", id: request.id, result: { id: 123 } }));
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+
+  const browser = await connectOpenBrowserUse({ socketPath });
+  try {
+    await browser.newTab({ windowMode: "user" });
+    await browser.client.createTab({ windowMode: "isolated" });
+    const params0 = calls[0];
+    const params1 = calls[1];
+    assert.equal(params0.window_mode, "user");
+    assert.equal(params1.window_mode, "isolated");
+  } finally {
+    browser.close();
+    server.close();
+    await new Promise((resolve) => server.once("close", resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("high-level browser tabs can goto, wait for load state, and read a DOM snapshot", async () => {
   const directory = await mkdtemp(join(tmpdir(), "obu-sdk-js-"));
   const socketPath = join(directory, "obu.sock");

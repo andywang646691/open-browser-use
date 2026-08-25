@@ -171,8 +171,8 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   `open_tab`/`claim_tab` 设置当前 tab，供后续 `cdp`/`evaluate`
   复用；`finalize_tabs()` 缺省 keep 为空列表。
 - 会话、browser、profile 等状态提供环境变量默认值：`OBU_SESSION_ID`、
-  `OBU_BROWSER`、`OBU_PROFILE` 在未显式传对应 flag 时作为默认值兜底，
-  flag 仍然优先。
+  `OBU_BROWSER`、`OBU_PROFILE`、`OBU_WINDOW_MODE` 在未显式传对应 flag
+  时作为默认值兜底，flag 仍然优先。
 - MCP 模式已下线：`cmd/open-browser-use/mcp.go` 的 stdio MCP server 源码
   仍保留在仓库内且被测试覆盖，但 `newMCPCommand` 不再注册到 CLI，
   `obu mcp` / `open-browser-use mcp` 不可用，README 与 skill 也不再有
@@ -215,6 +215,19 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   仅在该窗口完全没有同名分组时才新建。
   `turnEnded` and `finalizeTabs` clear active session state when control ends
   so download notifications only fire while a browser session is active.
+- 隔离窗口模型：新 session 的标签页默认全部落进一个专属后台 Chrome 窗口
+  （`chrome.windows.create`：`focused:false`、tabs `active:false`、非最小化、
+  右下角小尺寸定位），全程不抢焦点、不打扰用户现有窗口；`session.windowId`
+  持久化在 session state 中，窗口被用户关闭或 Chrome 重启后，下次创建 tab
+  时自动重建。`window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
+  --window-mode` flag）决定是否隔离：缺省/`isolated` 即隔离，`user` 退出
+  隔离、沿用旧行为（新标签页进用户聚焦窗口）。一旦 session 建立了隔离
+  窗口就永久隔离（tab group 是窗口级的，跨窗口会组分裂）。`claimUserTab`
+  把用户 tab `chrome.tabs.move` 进隔离窗口再入组；`getUserTabs` 排除所有
+  session 自有窗口内的 tab，防止 agent 把自己的工作页当用户 tab 再 claim。
+  `finalizeTabs` 无保留时关闭该窗口（仅当窗口已空，绝不连带关闭残留的
+  用户 tab）；`deliverable` tab 先移到用户可见窗口再进 `✅ Open Browser
+  Use` 分组，`handoff` 保留时窗口存活以便下轮继续。
 - MV3 extension event forwarding：`chrome.debugger.onEvent` 转发为
   `onCDPEvent`，`chrome.downloads` 创建/变更转发为 `onDownloadChange`，
   cursor content script 会回报 cursor arrival 以支持 `moveMouse`

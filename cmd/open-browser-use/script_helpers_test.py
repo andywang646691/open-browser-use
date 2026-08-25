@@ -195,6 +195,17 @@ class PreludeTest(unittest.TestCase):
         )
         self.assertEqual(self.sh.open_tab(""), {"id": 9, "url": ""})
 
+    def test_open_tab_window_mode_passthrough(self):
+        self.host.responses["createTab"] = {"id": 9, "url": ""}
+        # explicit override wins and reaches the wire
+        self.sh.open_tab("", window_mode="user")
+        # default leaves the key absent so the extension default (isolated) applies
+        self.sh.open_tab()
+        creates = [r for r in self.host.requests if r["method"] == "createTab"]
+        self.assertEqual(len(creates), 2)
+        self.assertEqual(creates[0]["params"]["window_mode"], "user")
+        self.assertNotIn("window_mode", creates[1]["params"])
+
     def test_cdp_passes_kwargs_as_command_params(self):
         self.sh.claim_tab(1)
         self.sh.cdp("DOM.getBoxModel", backendNodeId=5, depth=1)

@@ -78,7 +78,9 @@ export declare class OpenBrowserUseClient {
     onNotification(handler: NotificationHandler): () => void;
     request(method: string, params?: BrowserUseRequestParams): Promise<JsonValue>;
     getInfo(): Promise<JsonValue>;
-    createTab(): Promise<JsonValue>;
+    createTab(options?: {
+        windowMode?: "isolated" | "user";
+    }): Promise<JsonValue>;
     getTabs(): Promise<JsonValue>;
     getUserTabs(): Promise<JsonValue>;
     getUserHistory(params?: BrowserUseRequestParams): Promise<JsonValue>;
@@ -109,6 +111,7 @@ export declare class OpenBrowserUseBrowser {
     close(): void;
     newTab(options?: OpenBrowserUseGotoOptions & {
         url?: string;
+        windowMode?: "isolated" | "user";
     }): Promise<OpenBrowserUseTab>;
     tab(tabId: number): OpenBrowserUseTab;
     getTabs(): Promise<JsonValue>;

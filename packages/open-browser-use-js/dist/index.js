@@ -156,8 +156,12 @@ export class OpenBrowserUseClient {
     getInfo() {
         return this.request("getInfo");
     }
-    createTab() {
-        return this.request("createTab");
+    createTab(options = {}) {
+        const params = {};
+        if (options.windowMode) {
+            params.window_mode = options.windowMode;
+        }
+        return this.request("createTab", params);
     }
     getTabs() {
         return this.request("getTabs");
@@ -306,7 +310,7 @@ export class OpenBrowserUseBrowser {
         this.client.close();
     }
     async newTab(options = {}) {
-        const created = await this.client.createTab();
+        const created = await this.client.createTab({ windowMode: options.windowMode });
         const tabId = tabIdFromValue(created, "createTab response");
         const tab = this.tab(tabId);
         if (options.url) {

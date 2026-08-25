@@ -234,8 +234,12 @@ export class OpenBrowserUseClient {
     return this.request("getInfo");
   }
 
-  createTab(): Promise<JsonValue> {
-    return this.request("createTab");
+  createTab(options: { windowMode?: "isolated" | "user" } = {}): Promise<JsonValue> {
+    const params: BrowserUseRequestParams = {};
+    if (options.windowMode) {
+      params.window_mode = options.windowMode;
+    }
+    return this.request("createTab", params);
   }
 
   getTabs(): Promise<JsonValue> {
@@ -413,8 +417,8 @@ export class OpenBrowserUseBrowser {
     this.client.close();
   }
 
-  async newTab(options: OpenBrowserUseGotoOptions & { url?: string } = {}): Promise<OpenBrowserUseTab> {
-    const created = await this.client.createTab();
+  async newTab(options: OpenBrowserUseGotoOptions & { url?: string; windowMode?: "isolated" | "user" } = {}): Promise<OpenBrowserUseTab> {
+    const created = await this.client.createTab({ windowMode: options.windowMode });
     const tabId = tabIdFromValue(created, "createTab response");
     const tab = this.tab(tabId);
     if (options.url) {

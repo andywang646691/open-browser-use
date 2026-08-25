@@ -21,6 +21,10 @@ import time
 
 _SESSION_ID = os.environ.get("OBU_SESSION_ID", "obu-cli")
 _TURN_ID = "{}-{}".format(_SESSION_ID, time.time_ns())
+# Default window placement for session tabs: "user" opts out into the legacy
+# shared-window behavior; anything else (or unset) means the dedicated
+# isolated window. Injected when the caller did not pass window_mode itself.
+_WINDOW_MODE = os.environ.get("OBU_WINDOW_MODE", "")
 _SOCKET_PATH = os.environ.get("OBU_SCRIPT_SOCKET", "")
 _SOCKET_ERROR = os.environ.get("OBU_SCRIPT_SOCKET_ERROR", "")
 _CONN = None
@@ -72,6 +76,8 @@ def _request(method, params=None):
     }
     request["params"].setdefault("session_id", _SESSION_ID)
     request["params"].setdefault("turn_id", _TURN_ID)
+    if _WINDOW_MODE:
+        request["params"].setdefault("window_mode", _WINDOW_MODE)
     payload = json.dumps(request).encode("utf-8")
     _CONN.sendall(struct.pack("@I", len(payload)) + payload)
     while True:
@@ -157,15 +163,23 @@ def claim_tab(tab_id):
     return result
 
 
-def open_tab(url=""):
+def open_tab(url="", window_mode=None):
     """Open a new session tab (optional url) and make it current.
+
+    window_mode: "isolated" (default; dedicated background window that never
+    steals focus) or "user" (legacy: open in the focused user window).
+    Omit to inherit the OBU_WINDOW_MODE environment variable.
 
     Returns the new tab object {"id": int, "url": str, ...}; the id is the
     current tab for later cdp()/evaluate() calls.
 
-    Example: tab = open_tab("https://example.com")"""
+    Example: tab = open_tab("https://example.com")
+             tab = open_tab("https://example.com", window_mode="user")"""
     global _CURRENT_TAB
-    tab = _request("createTab")
+    params = {}
+    if window_mode is not None:
+        params["window_mode"] = window_mode
+    tab = _request("createTab", params or None)
     tab_id = tab.get("id")
     if not isinstance(tab_id, int):
         raise RuntimeError("createTab returned no numeric id: {!r}".format(tab))
