@@ -54,3 +54,48 @@
 - `skills/open-browser-use/SKILL.md`
 - `docs/ARCHITECTURE.md`
 - `docs/exec-plans/active/2026-08-24-python-heredoc-redesign.md`（进度）
+
+---
+
+## [2026-08-26 01:18] | Task: SKILL.md heredoc 段补齐运行时 API 自省指引（doc sync 收尾）
+
+### 🤖 Execution Context
+
+- **Agent ID**: `pi-agent`
+- **Base Model**: `claude`
+- **Runtime**: `pi`
+
+### 📥 User Query
+
+> （上一轮 heredoc 重写完成后的收尾）SKILL.md 里 heredoc 段的示例代码与
+> 实际运行时 helper 面不一致；提交前把 skill 文档对齐到
+> “docstring 自省”模型，并修正会话状态示例。
+
+### 🛠 Changes Overview
+
+**Scope:** `skills/open-browser-use/SKILL.md`（文档）
+
+**Key Actions:**
+
+- **[skill 文档]**: heredoc 段的 inline Python 示例替换为 `# your python here`
+  占位；新增 “Learn the API first — always” 一节，明确 `_help()`/
+  `help(name)` 运行时 docstring 自省是唯一 API 事实来源，不再从文档抄
+  示例代码。
+- **[How to use it]**: 拆成 Process model / Tabs / Read / Act /
+  Wait on conditions（条件轮询替代固定 sleep）/ Coordinates 六条，
+  去掉与既有 tabs.md 重复的细节。
+- **[会话状态示例]**: `OBU_SESSION_ID` 示例去掉 `-<timestamp>` 后缀；
+  约束从“不要切换 browser/profile”扩为“不要切换
+  browser/profile/session_id”。
+
+### 🧠 Design Intent (Why)
+
+docstring 随代码走、不过期；skill 文档里再抄一份 API 清单必然会漂移。
+上一轮已把 API 契约交给 docstring（`help()` 零成本自省），这一轮把
+skill 文档里的具体示例也删掉，强制 LLM 走运行时自省，避免从过期文档
+“背书”出幻觉代码。
+
+### 📁 Files Modified
+
+- `skills/open-browser-use/SKILL.md`
+- `docs/histories/2026-08/20260824-1310-python-heredoc-redesign.md`（追加本轮）

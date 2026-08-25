@@ -20,47 +20,56 @@ helpers on the user's real Chrome profile.
 State lives in env vars — set once, forget (flags still override):
 
 ```sh
-export OBU_SESSION_ID="obu-<task-slug>-<timestamp>"
+export OBU_SESSION_ID="obu-<task-slug>"
 export OBU_BROWSER="<browser>"   # after the user chose one
 export OBU_PROFILE="<profile>"   # after the user chose one
 ```
-Don't switch browser/profile mid-task.
+Don't switch browser/profile/session_id mid-task.
 
 ## Browser work
-Real-Python heredoc scripts: helpers are pre-imported as plain Python
-functions, and the whole language works (if/for, comprehensions, f-strings).
-Values pass positionally or as keyword args — never hand-written
-serialization:
+Work is done as real-Python heredoc scripts; helpers are pre-imported as plain
+Python functions, so the whole language works (if/for, comprehensions,
+f-strings, `len(...)`, slices). Values pass positionally or as keyword args —
+never hand-written serialization.
 
 ```sh
 obu <<'PY'
-tabs = user_tabs()
-claim_tab(tabs[0]["id"])          # reuse a matching open tab, don't duplicate
-open_tab("https://example.com")   # sets the current tab
-tree = cdp("Accessibility.getFullAXTree")["nodes"]  # role / name / backendDOMNodeId
-print(evaluate("document.querySelector('h1').textContent"))
-evaluate("document.querySelector('a').click()")     # act via JS
-headings = [n for n in tree if n["role"]["value"] == "heading"]  # real Python
-finalize_tabs()                   # keep empty by default
+# your python here
 PY
 ```
-- Each heredoc run is a fresh process: the current-tab pointer does not carry
-  over between runs — only tab membership persists via `OBU_SESSION_ID`.
-  Start every script with `claim_tab(id)` or `open_tab(url)` before any
-  `cdp()`/`evaluate()`.
-- Every helper documents its signature and return shape in its docstring:
-  unsure, call `help(name)` or `_help()` inside the script — the contract is
-  always available at runtime.
-- Find elements via the AX tree first; fall back to `evaluate(js)` when the
-  tree lacks the element. Never guess tab ids.
-- Act via `evaluate(js)` — `.click()`, focus, set values — and verify after
-  acting. For coordinates run `cdp("DOM.getDocument")` once, then
-  `cdp("DOM.getBoxModel", backendNodeId=n)["model"]["content"]` before
-  scrolling or `Input.dispatchMouseEvent` (raw CDP, can be dropped on
-  background tabs).
-- Other helpers: `navigate(tab_id, url)`, `history(query)`, `tabs()`,
-  `name_session(name)` — Python builtins like `len(...)` and slices
-  (`tree[0:5]`) work natively.
+
+### Learn the API first — always
+Don't write code from memory or from this file: the runtime API is the source
+of truth. On the first script of a task — and any time you're unsure — discover
+the surface from the helpers' own docstrings before writing real code:
+
+```py
+_help()      # list every available helper
+help(name)   # read one helper's signature, params, return shape, gotchas
+```
+
+Every helper documents its contract in its docstring, so `help()` gives you the
+exact, current API at runtime — including any helper you haven't seen before.
+When a later call looks different than you expected, re-`help()` it instead of
+guessing. This replaces the need for inline examples.
+
+### How to use it
+- **Process model**: each `obu <<'PY'` run is a fresh process. The current-tab
+  pointer does not persist between runs — only tab membership persists via
+  `OBU_SESSION_ID`. So reclaim or open a tab at the top of *every* script
+  before any browser call.
+- **Tabs**: prefer reusing an already-open matching tab over opening a new one;
+  never guess tab ids — list them first, then act on one.
+- **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
+  when the tree lacks the element.
+- **Act**: via `evaluate(js)` — click, focus, set values — and always verify the
+  result after acting.
+- **Wait on conditions, not fixed sleeps**: when the state you need is
+  observable, poll for it (loop with a bounded retry budget until it holds)
+  instead of a blind `time.sleep`. Use a short settle delay only where no
+  condition can be observed.
+- **Coordinates / raw CDP**: only when DOM/JS access isn't enough; `help()` on
+  the relevant helpers for the exact steps and their order.
 
 ## End a task
 `finalize_tabs()` exactly once, last browser action; keep empty by default.
