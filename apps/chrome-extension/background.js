@@ -411,6 +411,38 @@ class BrowserBackend {
       this.activeTabsBySession.delete(session.sessionId);
       await this.store.removeSession(session.sessionId);
     }
+    // Report what actually happened so agents can verify instead of trusting
+    // silence: a lost session store or dissolved tab group previously degraded
+    // to an empty no-op that still looked like success.
+    const report = {
+      closed: agentTabsToClose,
+      released: userTabsToRelease,
+      kept: [
+        ...deliverableTabs.map((tabId) => ({ tabId, status: "deliverable" })),
+        ...handoffTabs.map((tabId) => ({ tabId, status: "handoff" }))
+      ]
+    };
+    if (tabs.length === 0) {
+      report.warning =
+        "no session tabs found — nothing was closed (session state may be lost or its tab group dissolved); " +
+        "verify with user_tabs() and close leftovers via close_tab(tab_id)";
+    }
+    return report;
+  }
+
+  async closeUserTab(params) {
+    await this.requireSession(params);
+    const tabId = requireTabId(params, "closeUserTab");
+    const tab = await chrome.tabs.get(tabId);
+    if (!hasTabId(tab)) {
+      throw new Error(`Chrome tab ${tabId} has no id`);
+    }
+    if (tab.url?.startsWith("chrome://")) {
+      throw new Error(`Chrome internal tab ${tabId} cannot be closed`);
+    }
+    await chrome.tabs.remove(tabId);
+    this.cursorByTabId.delete(tabId);
+    return { closed: tabId };
   }
 
   async nameSession(params) {

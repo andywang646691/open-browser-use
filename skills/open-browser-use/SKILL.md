@@ -64,6 +64,9 @@ PY
 
 ## End a task
 `finalize_tabs()` exactly once, last browser action; keep empty by default.
+It returns what it closed (`closed`/`released`/`kept`) — a `warning` means
+nothing was closed: re-verify with `user_tabs()` and clean leftovers via
+`close_tab(id)`.
 Keep a tab only when the user needs the live page after the turn, e.g. `finalize_tabs(keep=[{"tabId": id, "status": "deliverable"}])`.
 No browser tools after. Details: [references/tabs.md](references/tabs.md).
 

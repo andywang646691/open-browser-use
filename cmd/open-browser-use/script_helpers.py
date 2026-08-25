@@ -274,9 +274,27 @@ def finalize_tabs(keep=None):
     keep open; defaults to [] (close everything). Keep a tab only when the
     user needs the live page after this turn.
 
+    Returns a report so you can verify instead of trusting silence:
+      {"closed": [tabId...], "released": [tabId...],
+       "kept": [{"tabId": id, "status": ...}]}
+    A "warning" key means nothing was closed (session state lost / tab group
+    dissolved): verify with user_tabs() and clean leftovers via close_tab().
+
     Example: finalize_tabs()  # close all
     Example: finalize_tabs(keep=[{"tabId": 123, "status": "deliverable"}])"""
     return _request("finalizeTabs", {"keep": list(keep or [])})
+
+
+def close_tab(tab_id):
+    """Close any real Chrome tab by id — cleanup fallback when finalize_tabs()
+    reports a warning or a stray tab survives.
+
+    tab_id: int (or numeric string) from user_tabs(). Never guess ids.
+    Returns {"closed": tab_id}. chrome:// pages are refused.
+
+    Example: close_tab(user_tabs()[0]["id"])"""
+    tab_id = _coerce_tab_id(tab_id, "close_tab")
+    return _request("closeUserTab", {"tabId": tab_id})
 
 
 def memory_put(domain, kind, note, unlock=None, selector=None, tech=None, runbook=None):
@@ -351,6 +369,7 @@ def _help():
         "cdp",
         "evaluate",
         "memory_put",
+        "close_tab",
         "finalize_tabs",
     ]
     print("obu helpers:")
