@@ -1,0 +1,93 @@
+# 隔离窗口模式(Isolated Window Mode)
+
+## 目标
+
+一个 OBU session 的全部工作默认发生在一个**独立的、不抢焦点的后台 Chrome 窗口**里:
+新标签页、claim 的标签页都落进这个窗口;任务结束无保留时自动关窗。
+窗口**默认不最小化**(用户明确要求),`focused:false` + `active:false` + 靠角落的小尺寸定位
+保证全程不打扰用户现有操作。**隔离是默认行为**:不使用用户已有的标签页,除非用户显式要求
+(claim 是显式动作,`OBU_WINDOW_MODE=user` 是会话级显式退出)。
+
+## 范围
+
+- 包含:
+  - **默认模式翻转**:`OBU_WINDOW_MODE` 语义改为——缺省即隔离;取值 `isolated`(默认,隔离非最小化)/ `minimized`(隔离且最小化,可选加强静默)/ `user`(旧行为,新标签页进用户聚焦窗口,显式退出隔离)
+  - 扩展:session 级“拥有窗口”模型(get-or-create / 复用 / 失效重建 / finalize 关窗)
+  - 扩展:claim 跨窗口时把标签页 move 进隔离窗口(维持 tab group 单窗口不变量)
+  - 扩展:user_tabs() 排除属于 session 窗口的标签页(防止 agent 自 claim)
+  - 扩展:finalize 时 deliverable 先移到用户可见窗口再关隔离窗(默认路径同样生效)
+  - Go CLI:`--window-mode` flag + `OBU_WINDOW_MODE` env(经 applySessionDefaults 注入,覆盖 actionRunner 与 CLI 两条路径)
+  - Python helper:`open_tab(url, window_mode=None)` 透传
+  - JS SDK:createTab/newTab 透传可选 windowMode
+  - 文档:SKILL.md(含“不主动 claim 用户 tab、除非用户要求”的指南翻转)、ARCHITECTURE.md
+- 不包含:
+  - 删除 claim/`user` 模式——显式要求时仍可用
+  - 多 profile/browser 下的窗口策略差异(沿用现有 profile 路由)
+  - deliverable/handoff 语义之外的窗口管理(不回收含残留用户 tab 的窗口)
+
+## 背景
+
+- 相关文档:`docs/HISTORY_GUIDE.md`、`docs/PLANS_GUIDE.md`、`docs/ARCHITECTURE.md`
+- 相关代码路径:
+  - `apps/chrome-extension/background.js`(`createTab`/`claimUserTab`/`getUserTabs`/`finalizeTabs`/`createBackgroundTab`/`SessionStore.getSession`)
+  - `cmd/open-browser-use/main.go`(`newOpenTabCommand`/`applySessionDefaults`/`invokeWithProfile`)
+  - `cmd/open-browser-use/script_helpers.py`(`open_tab`)
+  - `packages/open-browser-use-js/src/index.ts`(`createTab`/`newTab`)
+- 已知约束:
+  - `chrome.tabGroups` 是窗口级的:同一 session 的 tab 必须同窗口(move 进隔离窗口是硬约束,不是偏好)
+  - `chrome.windows` API 不需要 manifest 权限(官方文档确认),manifest 无需改动
+  - `windows.create` 的 `left/top/width/height` 不能与 minimized/maximized/fullscreen 组合——我们不用 state,可以定位
+  - macOS 上新窗口即使 `focused:false`,Dock 上 Chrome 可能短暂闪动(平台行为,不可消除)
+
+## 风险
+
+- 风险:claim 一个用户正在看的页面会把它从用户窗口“抽走”到隔离窗口(可见变化)。
+  缓解:claim 改为显式动作,默认指南不再主动 claim;只有用户要求时才发生。
+- 风险:隔离窗口残留被 release 的用户 tab 时,关窗会连带关掉用户 tab。
+  缓解:finalize 只在窗口为空(`tabs.query` 计数 0)时才 `windows.remove`,残留用户 tab 的窗口保留。
+- 风险:session.windowId 持久化在 chrome.storage.local,Chrome 重启/用户关窗后失效。
+  缓解:`ensureSessionWindow` 每次都 `chrome.windows.get` 校验,失效即重建并回写。
+- 风险:env `<->` 会话中途切换导致部分请求带 mode、部分不带,破坏单窗口不变量。
+  缓解:隔离状态以 session.windowId 是否已存在为准("一旦隔离,永久隔离"),mode 参数只负责开启。
+
+## 里程碑
+
+1. 方案收敛(已完成:本计划)。
+2. 扩展侧实现 + 单测(`isolated-window.test.mjs`)。
+3. CLI/Python/SDK 参数透传 + 测试。
+4. 文档(SKILL/ARCHITECTURE)+ 全量验证(`make ci`)+ 真浏览器冒烟。
+5. history 记录。
+
+## 验证方式
+
+- 命令:`make ci`(go test、node --test apps/chrome-extension/*.test.mjs、pnpm 单测、python unittest、打包脚本)
+- 新增单测:`node apps/chrome-extension/isolated-window.test.mjs`
+  - createTab(隔离)首建窗口、二次复用同一 window id
+  - claim 跨窗口 tab -> move 进隔离窗口并入组
+  - user_tabs() 排除隔离窗口内 tab
+  - finalize:deliverable 先移用户窗口;会话无保留且窗口空 -> windows.remove;handoff 保留窗口
+  - 默认模式不触发 windows.create
+- 手工检查(真 Chrome,`make local-install` 后):
+  - `OBU_WINDOW_MODE=isolated obu` 连续 `open_tab()` 两次 -> 同一后台窗口、当前焦点不变
+  - `user_tabs()` 不含工作tab;`finalize_tabs()` 后隔离窗口消失,用户窗口原样
+
+## 进度记录
+
+- [ ] 确认范围和约束。
+- [ ] 扩展侧实现(窗口模型 + claim + user_tabs 排除 + finalize 关窗)。
+- [ ] CLI/Python/SDK 透传。
+- [ ] 单测 + `make ci` 全量通过。
+- [ ] 真浏览器冒烟验证。
+- [ ] SKILL/ARCHITECTURE 文档同步 + history 记录。
+
+## 决策记录
+
+- 2026-08-26:隔离语义持久化放在扩展 session 记录(`windowId`),而非每次请求参数——
+  一旦会话建立隔离窗口,后续请求即使丢了 env 也保持一致,杜绝跨窗口组分裂。
+- 2026-08-26:不最小化(用户明确);用 `focused:false` + `active:false` + 底右下角小尺寸定位
+  实现“不打扰”。macOS Dock 闪动属平台行为,接受并在文档标注。`minimized` 保留为 env 可选值。
+- 2026-08-26:**隔离翻转默认**——`OBU_WINDOW_MODE` 缺省即 `isolated`;"不使用用户已有
+  tab,除非用户要求"通过两层实现:技术上 claim_tab 始终是显式逐页动作(用户点名才发生),
+  会话级显式退出用 `OBU_WINDOW_MODE=user`;指南上 SKILL.md 把“reuse 优先”改为“默认不 claim”。
+- 2026-08-26:deliverable 在 finalize 先 move 到用户可见窗口再入交付组,避免交付物
+  藏在后台窗口里;窗口仅在为空时才关闭,绝不连带关掉残留用户 tab。

@@ -19,6 +19,7 @@ temp/
 
 # Dependency caches and common build output
 node_modules/
+.worktrees/
 .pnpm-store/
 .npm/
 .yarn/
