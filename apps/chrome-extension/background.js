@@ -6,8 +6,13 @@ const HEARTBEAT_ALARM_NAME = "open-browser-use-heartbeat";
 const DEFAULT_CDP_TIMEOUT_MS = 10_000;
 const CURSOR_ARRIVAL_TIMEOUT_MS = 1_000;
 const MAX_USER_TABS = 1000;
-const ISOLATED_WINDOW_WIDTH = 1150;
-const ISOLATED_WINDOW_HEIGHT = 860;
+// Isolated-window fallback bounds, used only when the screen size cannot be
+// read. When it can, the window is sized near-fullscreen (normal size): a
+// small corner popup is bad for agents because SPA virtual-scroll lists and
+// IntersectionObserver-driven renderers mount fewer items in a small viewport
+// (x.com session: DOM never showed more than ~4 posts).
+const ISOLATED_WINDOW_WIDTH = 1280;
+const ISOLATED_WINDOW_HEIGHT = 900;
 const ISOLATED_WINDOW_MARGIN = 24;
 const DEFAULT_SESSION_GROUP_TITLE = "Task - OBU";
 const DELIVERABLE_GROUP_TITLE = "✅ Open Browser Use";
@@ -301,7 +306,7 @@ class BrowserBackend {
   }
 
   // Get-or-create the session's isolated window; never steals focus and stays
-  // out of the user's way (corner-sized, unfocused, non-minimized by default).
+  // out of the user's way (normal-sized, unfocused, non-minimized by default).
   // Returns { win, created }: created is true when this call built the window
   // (its start tab may then be reused by the caller).
   async ensureSessionWindow(sessionState) {
@@ -1487,17 +1492,23 @@ function isolatedWindowBounds() {
   } catch {
     // screen unavailable in some extension contexts; fall back to defaults
   }
+  // Normal size: fill the available screen like a regular Chrome window
+  // (small margin around it). Not capped — a full viewport is what SPA
+  // virtual-scroll lists expect. Floor guards against degenerate tiny screens.
+  const margin = ISOLATED_WINDOW_MARGIN;
   const width = availWidth
-    ? Math.max(320, Math.min(ISOLATED_WINDOW_WIDTH, availWidth - ISOLATED_WINDOW_MARGIN * 2))
+    ? Math.max(320, availWidth - margin * 2)
     : ISOLATED_WINDOW_WIDTH;
   const height = availHeight
-    ? Math.max(240, Math.min(ISOLATED_WINDOW_HEIGHT, availHeight - ISOLATED_WINDOW_MARGIN * 2))
+    ? Math.max(240, availHeight - margin * 2)
     : ISOLATED_WINDOW_HEIGHT;
+  // Centered, like a normal window; Chrome picks default placement when the
+  // screen is unavailable.
   const left = availWidth
-    ? Math.max(0, availWidth - width - ISOLATED_WINDOW_MARGIN)
+    ? Math.max(0, Math.round((availWidth - width) / 2))
     : null;
   const top = availHeight
-    ? Math.max(0, availHeight - height - ISOLATED_WINDOW_MARGIN)
+    ? Math.max(0, Math.round((availHeight - height) / 2))
     : null;
   return { width, height, left, top };
 }

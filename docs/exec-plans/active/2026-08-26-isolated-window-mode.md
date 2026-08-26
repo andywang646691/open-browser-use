@@ -4,7 +4,7 @@
 
 一个 OBU session 的全部工作默认发生在一个**独立的、不抢焦点的后台 Chrome 窗口**里:
 新标签页、claim 的标签页都落进这个窗口;任务结束无保留时自动关窗。
-窗口**默认不最小化**(用户明确要求),`focused:false` + `active:false` + 靠角落的小尺寸定位
+窗口**默认不最小化**(用户明确要求),`focused:false` + `active:false` + 正常尺寸近全屏定位(2026-08 起:小尺寸角落窗会让 SPA 虚拟列表只装少量条目,改为铺满可用屏幕、居中)
 保证全程不打扰用户现有操作。**隔离是默认行为**:不使用用户已有的标签页,除非用户显式要求
 (claim 是显式动作,`OBU_WINDOW_MODE=user` 是会话级显式退出)。
 
@@ -128,3 +128,8 @@
   泄漏缺陷修复必须落在 handler 汇聚点(prelude / CLI claim-tab / action 模式
   三个入口全覆盖);纯用户 tab 的 claim 语义不变(无记录 → origin=user)。
   不引入独立 select_tab 助手,接受 API 的实用双重身份。
+- 2026-08-26:**隔离窗口改正常尺寸(x.com 会话复盘驱动)**——复盘发现小尺寸角落窗
+  对 SPA 虚拟滚动/IntersectionObserver 渲染不稳(时间线只装 3-4 条且滚动不追加),
+  把 `isolatedWindowBounds` 从"1150x860 右下角"改为"铺满可用屏幕(avail - 2x24px
+  边距)、居中",`focused:false`/非最小化不变量不变;`screen` 不可用时回退
+  1280x900。单测在 vm 上下文注入 1920x1080 屏,锁定近全屏尺寸与居中位置。

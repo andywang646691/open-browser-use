@@ -314,7 +314,10 @@ async function loadBackground(bgSource, chromeFake) {
     TextDecoder,
     structuredClone,
     crypto: globalThis.crypto,
-    Date
+    Date,
+    // A normal desktop display: the isolated window should fill it (minus a
+    // small margin) and be centered, not a corner popup.
+    screen: { availWidth: 1920, availHeight: 1080 }
   });
   vm.runInContext(inject, context);
   vm.runInContext(
@@ -344,7 +347,13 @@ async function run() {
     const win = fake.state.createdWindows[0];
     assert.equal(win.focused, false, "created window must not steal focus");
     assert.equal(win.type, "normal");
-    assert.equal(typeof win.width, "number", "created window is sized");
+    // Normal size, centered — near-fullscreen (1920x1080 screen minus 2x24px
+    // margin), not a corner-sized popup. A full viewport keeps SPA virtual-
+    // scroll lists mounting real content.
+    assert.equal(win.width, 1920 - 48, "isolated window fills the screen width");
+    assert.equal(win.height, 1080 - 48, "isolated window fills the screen height");
+    assert.equal(win.left, 24, "isolated window is centered horizontally");
+    assert.equal(win.top, 24, "isolated window is centered vertically");
     assert.equal(first.windowId, win.id, "createTab result carries the owned windowId");
     assert.equal(typeof first.windowId, "number", "createTab returns windowId");
     const session = await backend.store.getSession("obu-test");

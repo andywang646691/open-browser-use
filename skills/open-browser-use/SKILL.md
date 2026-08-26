@@ -63,7 +63,7 @@ guessing. This replaces the need for inline examples.
   before any browser call.
 - **Tabs**: never guess tab ids — list them first, then act on one. Session
   tabs open in a dedicated background window by default: unfocused,
-  non-minimized, corner-sized, so the whole run never disturbs the user
+  non-minimized, normal-sized (fills the screen), so the whole run never disturbs the user
   (`OBU_WINDOW_MODE="user"` opts back into the shared-window flow). Don't
   claim the user's existing tabs unless they explicitly asked for that page —
   `user_tabs()` already excludes OBU's own window so session tabs can't be

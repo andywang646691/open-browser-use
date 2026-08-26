@@ -222,7 +222,7 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   so download notifications only fire while a browser session is active.
 - 隔离窗口模型：新 session 的标签页默认全部落进一个专属后台 Chrome 窗口
   （`chrome.windows.create`：`focused:false`、tabs `active:false`、非最小化、
-  右下角小尺寸定位），全程不抢焦点、不打扰用户现有窗口；`session.windowId`
+  正常尺寸近全屏居中定位（小视口会让 SPA 虚拟列表只装少量条目）），全程不抢焦点、不打扰用户现有窗口；`session.windowId`
   持久化在 session state 中，窗口被用户关闭或 Chrome 重启后，下次创建 tab
   时自动重建。`window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
   --window-mode` flag）决定是否隔离：缺省/`isolated` 即隔离，`user` 退出
