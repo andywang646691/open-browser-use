@@ -1120,10 +1120,25 @@ class BrowserBackend {
     const session = await this.store.getSession(sessionId);
     if (typeof session.windowId === "number") {
       // Isolated sessions track membership by owned window (no tab group).
+      // Union with surviving tabOrigins entries: an explicit window_mode="user"
+      // tab inside an isolated session lives in the user's window and must
+      // still be visible to finalize so it gets closed with the session.
       try {
-        return (await chrome.tabs.query({ windowId: session.windowId })).filter(
+        const windowTabs = (await chrome.tabs.query({ windowId: session.windowId })).filter(
           (tab) => hasTabId(tab) && !tab.url?.startsWith("chrome://")
         );
+        const extras = [];
+        for (const raw of Object.keys(session.tabOrigins)) {
+          const id = Number(raw);
+          if (!Number.isInteger(id) || windowTabs.some((tab) => tab.id === id)) {
+            continue;
+          }
+          const tab = await chrome.tabs.get(id).catch(() => null);
+          if (tab && hasTabId(tab) && !tab.url?.startsWith("chrome://")) {
+            extras.push(tab);
+          }
+        }
+        return [...windowTabs, ...extras];
       } catch {
         await this.store.removeSession(sessionId);
         return [];

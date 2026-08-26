@@ -448,6 +448,22 @@ async function run() {
     assert.ok(sessions["obu-test"], "handoff keeps the session");
   }
 
+  // === Test 9: a user-mode tab opened inside an isolated session is still finalized ===
+  {
+    const fake = createChromeFake();
+    fake.helpers.addWindow({ focused: true, type: "normal" });
+    const Backend = await loadBackground(bgSource, fake.chrome);
+    const backend = new Backend();
+    const ua = await backend.createTab(sessionParams("obu-mix", { window_mode: "user" }));
+    const a = await backend.createTab(sessionParams("obu-mix"));
+    const report = await backend.finalizeTabs(sessionParams("obu-mix", { keep: [] }));
+    assert.deepEqual(
+      [...report.closed].sort(),
+      [ua.id, a.id].sort(),
+      "user-mode tab in an isolated session is closed with the session"
+    );
+  }
+
   console.log("isolated-window tests passed");
 }
 
