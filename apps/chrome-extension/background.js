@@ -1088,13 +1088,7 @@ class BrowserBackend {
       // repairs with tabGroups.move() — a real session tab never leaves the
       // owned window. If grouping is unavailable, fall back to window-based
       // membership (no group).
-      if (await this.ensureSessionGroupInWindow(session, session.windowId)) {
-        try {
-          await chrome.tabs.group({ groupId: session.chromeGroupId, tabIds: [tabId] });
-        } catch {
-          session.chromeGroupId = null;
-        }
-      }
+      await this.ensureSessionGroupInWindow(session, session.windowId, tabId);
       await this.store.save();
       return;
     }
@@ -1120,15 +1114,18 @@ class BrowserBackend {
   }
 
   // Establish (or confirm) a live tab group anchored inside the session's
-  // owned window. Returns true when the group is usable. Never lets a real
-  // session tab risk being dragged: a temporary scaffold tab absorbs any
-  // wrong-window placement, the group is repaired with tabGroups.move(), the
-  // scaffold is removed, and failures degrade to window-based membership.
-  async ensureSessionGroupInWindow(session, winId) {
+  // owned window and join `tabId`. Returns true when the tab ended up grouped.
+  // Never lets a real session tab risk being dragged: a temporary scaffold tab
+  // absorbs any wrong-window placement, the group is repaired with
+  // tabGroups.move(), the REAL tab joins while the scaffold still anchors the
+  // group (Chrome drops empty groups when their last member leaves), and only
+  // then is the scaffold removed. Failures degrade to window-based membership.
+  async ensureSessionGroupInWindow(session, winId, tabId) {
     if (typeof session.chromeGroupId === "number") {
       try {
         const group = await chrome.tabGroups.get(session.chromeGroupId);
         if (group && group.windowId === winId) {
+          await chrome.tabs.group({ groupId: session.chromeGroupId, tabIds: [tabId] });
           return true;
         }
       } catch {
@@ -1164,6 +1161,11 @@ class BrowserBackend {
           await chrome.tabs.ungroup([scaffold.id]).catch(() => {});
           groupId = null;
         }
+      }
+      if (groupId !== null) {
+        // Join the real tab while the scaffold still anchors the group; a tab
+        // removed from an anchored group is safe, an emptied group is not.
+        await chrome.tabs.group({ groupId, tabIds: [tabId] });
       }
     } catch {
       groupId = null;

@@ -46,6 +46,16 @@ function createChromeFake() {
     return [...state.tabs.values()].filter((t) => t.windowId === windowId).length;
   }
 
+  function dissolveEmptyGroups() {
+    // real Chrome removes a group when its last member leaves
+    for (const [groupId, g] of [...state.groups.entries()]) {
+      const members = [...state.tabs.values()].filter((t) => t.groupId === groupId);
+      if (members.length === 0) {
+        state.groups.delete(groupId);
+      }
+    }
+  }
+
   const chrome = {
     storage: {
       local: {
@@ -121,14 +131,18 @@ function createChromeFake() {
           state.removedTabs.push(id);
           state.tabs.delete(id);
         }
+        dissolveEmptyGroups();
       },
       async group({ groupId, tabIds, createProperties }) {
         const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
         let targetGroupId = groupId;
         let groupWindowId = null;
         if (typeof targetGroupId === "number") {
-          // real Chrome moves grouped tabs into the group's window
-          groupWindowId = state.groups.get(targetGroupId)?.windowId ?? null;
+          // real Chrome moves grouped tabs into the group's window; an
+          // already-dissolved group rejects the call
+          const g = state.groups.get(targetGroupId);
+          if (!g) throw new Error(`No tab group ${targetGroupId}`);
+          groupWindowId = g.windowId;
         } else {
           // real Chrome defaults a new group to the *current* (focused) window
           // and moves the tabs there — unless createProperties.windowId pins it
@@ -160,6 +174,7 @@ function createChromeFake() {
           const t = state.tabs.get(id);
           if (t) t.groupId = -1;
         }
+        dissolveEmptyGroups();
       },
       async update(tabId, patch) {
         const t = state.tabs.get(tabId);
