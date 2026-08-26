@@ -47,6 +47,47 @@ For Chrome Beta, register that browser explicitly:
 open-browser-use setup --browser chrome-beta
 ```
 
+## Self-Hosted Fork / Load Unpacked
+
+When this project is a forked/local build (not tracking the upstream Web Store
+item), give the extension its own permanent identity instead of the store
+version: the manifest carries a committed `key` (public), so a Developer-mode
+`Load unpacked` of `apps/chrome-extension/` always yields the same extension
+id, independent of upstream ids and of the checkout directory.
+
+One-time fork setup:
+
+1. Generate a signing key and pin its public half into the manifest (the
+   private half stays local, do not commit it):
+
+   ```sh
+   mkdir -p keys
+   openssl genrsa -out keys/extension-key.pem 2048
+   chmod 600 keys/extension-key.pem
+   openssl rsa -in keys/extension-key.pem -pubout -outform DER | \
+     base64 | tr -d '\n'   # paste into manifest.json as "key"
+   ```
+
+   `keys/` is gitignored; the Chrome extension id derives from the public key
+   (see `extensionIDFromPublicKey` in `cmd/open-browser-use/main.go`), so it
+   stays stable as long as the private key is not lost and the manifest key is
+   not changed.
+
+2. Load the extension unpacked: `chrome://extensions` → Developer mode →
+   `Load unpacked` → `apps/chrome-extension/`. Disable or remove any previous
+   store/beta copy so only one native messaging connection exists.
+
+3. Register the native host for the fork's extension id (the id shown on
+   `chrome://extensions`, or derived from the manifest key):
+
+   ```sh
+   open-browser-use install-manifest --extension-id <fork-extension-id>
+   open-browser-use install-manifest --extension-id <fork-extension-id> --browser chrome-beta
+   ```
+
+   Restart Chrome (or toggle the extension) so the new native host manifest is
+   picked up.
+
 For BitBrowser, install or load the extension in the target BitBrowser instance,
 then register the native host manifest into that instance's user-data directory:
 

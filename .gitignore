@@ -52,3 +52,6 @@ venv/
 # Misc generated artifacts
 *.swp
 *.swo
+
+# Local fork extension signing key (public key is committed in the manifest)
+keys/

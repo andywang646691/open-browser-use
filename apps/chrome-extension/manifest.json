@@ -24,11 +24,17 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self';"
   },
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "web_accessible_resources": [
     {
-      "resources": ["images/cursor-chat.png"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "images/cursor-chat.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "permissions": [
@@ -42,5 +48,6 @@
     "storage",
     "tabGroups",
     "tabs"
-  ]
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxAEeFKSNjjb3V2L2rwS7Pwxl7MFmKA0XJongvVNBWV73Es5S7uh/KuupQ4KE1XvF5wnOLMAawe7cw2K88x5ys8nIVMwj1kiDFY7bGgKtgqcmMLNnJT3Joa1ZewUmbaYj5nDU7tp+E1OzUwlQ6yoHz6Jwt4u22KBzFTnaqU8jAdcn/xXacMsqt+2TpbBtdq/8K1tXB1KoAT2LWRLYQrT2aMpQsObJoTPbF1pL8rQmd0q2RaFI0BSynj6AzjvYTUHk/msKwMhtAceQVNAQ15zKEtXw5I/kqEqlchWFjH/6ggwy5CjOm/oK/qjmj73rkhU0Q3aYfKjlhK4Xx/XZF6NBGQIDAQAB"
 }
