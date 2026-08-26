@@ -222,10 +222,10 @@ func TestScriptMemoryPutValidatesInput(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OBU_MEMORY_DIR", dir)
 	cases := []string{
-		`memory_put("x.com", kind="weird", note="n")`,    // invalid kind
-		`memory_put("x.com", kind="fail", note="n")`,     // missing unlock
+		`memory_put("x.com", kind="weird", note="n")`,       // invalid kind
+		`memory_put("x.com", kind="fail", note="n")`,        // missing unlock
 		`memory_put("x.com", kind="tip", note="pipe | in")`, // separator in note
-		`memory_put("", kind="tip", note="n")`,           // empty domain
+		`memory_put("", kind="tip", note="n")`,              // empty domain
 	}
 	for _, script := range cases {
 		var stderr bytes.Buffer

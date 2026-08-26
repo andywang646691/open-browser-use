@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1592,6 +1593,30 @@ func TestApplySessionDefaultsLeavesWindowModeAbsentWithoutEnv(t *testing.T) {
 	applySessionDefaults(params, "obu-window-mode")
 	if _, ok := params["window_mode"]; ok {
 		t.Fatalf("expected no window_mode when env unset, got %q", params["window_mode"])
+	}
+}
+
+func TestChromeExtensionCandidateIDsIncludesForkAndEnv(t *testing.T) {
+	t.Setenv("OBU_EXTENSION_IDS", "aaaaaaaabbbbbbbbccccccccdddddddd, "+forkExtensionID+", foo")
+	candidates := chromeExtensionCandidateIDs()
+	if candidates[0] != defaultChromeExtensionID {
+		t.Fatalf("expected store id first, got %q", candidates[0])
+	}
+	if !slices.Contains(candidates, forkExtensionID) {
+		t.Fatalf("expected fork extension id %q in candidates, got %v", forkExtensionID, candidates)
+	}
+	if !slices.Contains(candidates, "aaaaaaaabbbbbbbbccccccccdddddddd") {
+		t.Fatalf("expected env-injected id in candidates, got %v", candidates)
+	}
+	// env extras listed twice must not duplicate the fork id
+	count := 0
+	for _, id := range candidates {
+		if id == forkExtensionID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected fork id exactly once, got %d in %v", count, candidates)
 	}
 }
 

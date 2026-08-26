@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -615,10 +616,27 @@ type installedChromeProfile struct {
 	Source          string `json:"source"`
 }
 
+// forkExtensionID is this fork's load-unpacked extension id, derived from the
+// manifest key committed in apps/chrome-extension/manifest.json. Upstream
+// detection only knows the store/beta ids, which left `obu profiles` blind to
+// the fork's unpacked install (found via Secure Preferences "path") and
+// misled profile selection. OBU_EXTENSION_IDS (comma-separated) injects extra
+// candidate ids, e.g. after rotating the fork signing key.
+const forkExtensionID = "ldnahhefbkmhjohgiamfnfppaooejmag"
+
 func chromeExtensionCandidateIDs() []string {
 	candidates := []string{defaultChromeExtensionID}
 	if betaID, err := extensionIDFromPublicKey(betaExtensionPublicKey); err == nil && betaID != defaultChromeExtensionID {
 		candidates = append(candidates, betaID)
+	}
+	if forkExtensionID != "" && !slices.Contains(candidates, forkExtensionID) {
+		candidates = append(candidates, forkExtensionID)
+	}
+	for _, id := range strings.Split(envValue("OBU_EXTENSION_IDS", ""), ",") {
+		id = strings.TrimSpace(id)
+		if id != "" && !slices.Contains(candidates, id) {
+			candidates = append(candidates, id)
+		}
 	}
 	return candidates
 }

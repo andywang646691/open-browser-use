@@ -192,7 +192,12 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   `metadata.extensionInstanceId` 反查到 browser/profile（grep 每个支持 browser
   root 的 `Local Extension Settings/<extension-id>/*.{log,ldb}`），按 selector
   选出匹配 socket。selector 不匹配时 CLI 列出当前已连通
-  target 列表，提示用户打开对应 browser/profile。Windows 当前覆盖 Chrome
+  target 列表，提示用户打开对应 browser/profile。扩展检测的候选 id 包含商店版、
+beta 版以及本 fork 的 `forkExtensionID`（派生自仓库 manifest 的 `key`），并支持
+`OBU_EXTENSION_IDS` 环境变量注入额外候选（fork 换 key 后无需改代码）；Load
+unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settings[id].path`
+发现——此前候选列表只含上游 id，`profiles` 对 fork 的 unpacked 安装完全不可见，
+曾导致 profile 探测结果误判。Windows 当前覆盖 Chrome
   Stable 和 Chrome Beta 的 `%LOCALAPPDATA%\Google\...\User Data` roots；BitBrowser
   root 仍只在 macOS 路径中自动发现。未显式选择时仍保留
   `active.json` 快速路径；`active.json` 缺失或失效时，CLI 会扫描 socket 目录并
