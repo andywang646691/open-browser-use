@@ -604,7 +604,6 @@ class BrowserBackend {
   async attach(params) {
     await this.requireSessionTab(params, "attach");
     const tabId = requireTabId(params, "attach");
-    let newlyAttached = false;
     if (!this.attachedTabs.has(tabId)) {
       try {
         await chrome.debugger.attach({ tabId }, "1.3");
@@ -614,23 +613,6 @@ class BrowserBackend {
         }
       }
       this.attachedTabs.add(tabId);
-      newlyAttached = true;
-    }
-    if (newlyAttached) {
-      // Session tabs live in an unfocused background window, so Chrome reports
-      // document.visibilityState === "hidden"; sites gate lazy-loading and
-      // IntersectionObserver-driven rendering on visibility, which makes
-      // scrolling load nothing (x.com home timeline: page height frozen, only
-      // ~7 posts mounted). Emulate "visible" on every fresh attach so agents
-      // get a foreground-like page — no focus steal, nothing visible to the
-      // user. Errors are swallowed: older Chrome lacks the method and keeps
-      // the old (hidden) behavior — agents can still ask the user before
-      // falling back to focus-stealing tricks.
-      await chrome.debugger
-        .sendCommand({ tabId }, "Emulation.setPageVisibilityOverride", {
-          visibilityState: "visible"
-        })
-        .catch(() => {});
     }
   }
 

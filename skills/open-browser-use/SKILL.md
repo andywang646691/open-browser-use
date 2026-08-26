@@ -75,12 +75,15 @@ guessing. This replaces the need for inline examples.
   mistaken for user tabs.
 - **Don't disturb the user**: the default isolated background window exists
   so the whole run never touches the user's screen, focus, or tabs — keep it
-  that way, and never use `OBU_WINDOW_MODE="user"` for convenience. OBU
-  emulates page visibility on session tabs automatically (Chrome 129+; sites
-  that lazy-load only when the page is visible work as if foregrounded)
-  without stealing focus. If the only working path visibly disturbs the
-  user (focus steal, window/tab movement, user-window tabs), **ask the user
-  first** and get explicit agreement before doing it.
+  that way, and never use `OBU_WINDOW_MODE="user"` for convenience. A session
+  window that is occluded or minimized reports
+  `document.visibilityState === "hidden"`, and sites that lazy-load only when
+  visible will stall on scroll — there is **no CDP visibility emulation**, so
+  prefer the network-capture pattern (`wait_for_event`) over DOM-scroll
+  scraping. If the only working path needs the page truly visible
+  (`Page.bringToFront`, user-window tabs, window moves), it visibly disturbs
+  the user — **ask the user first** and get explicit agreement before doing
+  it.
 - **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
   when the tree lacks the element.
 - **Act**: via `evaluate(js)` — click, focus, set values — and always verify the
