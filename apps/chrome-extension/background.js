@@ -1410,7 +1410,8 @@ function toBrowserTab(tab) {
     title: tab.title,
     active: tab.active,
     url: tab.url,
-    windowId: tab.windowId
+    windowId: tab.windowId,
+    groupId: tab.groupId
   };
 }
 
