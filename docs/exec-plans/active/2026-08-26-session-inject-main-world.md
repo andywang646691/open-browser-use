@@ -52,3 +52,14 @@ GraphQL / 被动 Network 捕获），只验证 & 沉淀"注入"这条路的可�
   finalize 注销）、prelude `session_inject(script)` helper、打包清单加入新文件、
   SECURITY 交代。单测：扩展 7 文件全绿（含新增 main-inject.test.mjs 4 用例）、
   prelude 33 例、go test 全绿。待办：真机验证（需用户 reload 扩展）。
+- 2026-08-27：**真机验证通过（用户同意 reload 扩展）**。过程要点：扩展 unpacked
+  目录在主仓库 apps/chrome-extension，验证时把分支两份文件同步过去、SW 空闲冷启
+  后成功加载新代码（发现 `runAt` 枚举须为小写 `document_start`，chrome.scripting
+  与 CDP 命名不同，已修正+单测同步）。结果：① `__obuMainInject` 标记出现——
+  **MAIN-world document_start 注入确在页面脚本前执行**（本栈 addScript 路线从未
+  做到）；② 窗口最小化时页面 `document.visibilityState` 读作 visible 且
+  `hasFocus:false`——覆盖生效、无焦点偷取；③ IO 模拟让虚拟列表渲染出整个首屏
+  批次结构（页高 797→9669），但 x.com 帖子数据依赖 app boot 后 GraphQL，而该
+  profile 的 boot 被 Cloudflare 卡死（旧根因）→ 帖子数仍 4。结论：注入机制与
+  API 覆盖路线成立，数据侧阻塞与注入无关，仍由数据面方案兜底。验证后主仓库
+  扩展目录已还原回 HEAD。

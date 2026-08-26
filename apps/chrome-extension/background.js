@@ -483,7 +483,7 @@ class BrowserBackend {
         id: injectId,
         matches: origins,
         js: ["session-inject-main.js"],
-        runAt: "DOCUMENT_START",
+        runAt: "document_start",
         world: "MAIN",
         allFrames: false,
         persistAcrossSessions: false

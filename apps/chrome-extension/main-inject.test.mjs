@@ -355,7 +355,7 @@ async function run() {
     assert.equal(res.origins[0], "https://x.com/*", "matches scoped to session tab origin");
     assert.equal(fake.state.injectedScripts.length, 1, "one registration");
     const reg = fake.state.injectedScripts[0];
-    assert.equal(reg.runAt, "DOCUMENT_START", "runs before page scripts");
+    assert.equal(reg.runAt, "document_start", "runs before page scripts");
     assert.equal(reg.world, "MAIN", "runs in the page's real JS world");
     assert.equal(reg.matches.join(","), "https://x.com/*", "registered matches");
     assert.equal(reg.js.join(","), "session-inject-main.js", "template file");

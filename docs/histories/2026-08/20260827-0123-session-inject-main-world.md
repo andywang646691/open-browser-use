@@ -67,3 +67,19 @@ MVP 用静态模板（动态源码受异步通道限制且核心补丁就是这�
 
 真机验证（需用户同意 reload 扩展后）：open_tab x.com → `session_inject("visibility")`
 → 检查 `window.__obuMainInject` 与 DOM 装载行为；验证通过后可评估合入主线策略。
+
+## [2026-08-27 02:15] 真机验证完成（reload 扩展后）
+
+用户同意 reload 扩展。验证事实与修正：
+
+- 扩展 unpacked 目录 = 主仓库 `apps/chrome-extension`；验证时将分支两份文件
+  （background.js、session-inject-main.js）同步过去；`chrome.runtime.reload()`
+  （临时 popup 钩子）触发 SW 重读磁盘后成功加载新代码；验证完主仓库还原 HEAD。
+- 修正一个真实 API 差异：`chrome.scripting` 的 `runAt` 枚举是小写 `document_start`
+  （CDP Page 域才是 documentStart 风格），已修 background.js + 单测断言。
+- 验证结果：`__obuMainInject` 标记存在（注入确实在页面脚本前、MAIN world 执行）；
+  最小化窗口下 `visibilityState` 读作 visible 且 `hasFocus:false`（覆盖生效、不抢
+  焦点）；虚拟列表结构被 IO 模拟唤醒（页高 797→9669）但帖子数仍 4——x.com feed
+  数据依赖 app boot 后 GraphQL，该 profile boot 被 Cloudflare 卡死（旧根因），
+  与注入无关。结论：MAIN-world 注入路线成立，作为备份能力可用；数据侧仍走数据面
+  方案。验证过程全真机，无遗留（测试窗口/调试 tab 已清、popup.js 已还原）。
