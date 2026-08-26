@@ -30,6 +30,9 @@ function createChromeFake() {
     nextGroupId: 100,
     nextWindowId: 1,
     focusedWindowId: null,
+    // When true, chrome.tabs.group ignores createProperties.windowId and pins
+    // the new group to the focused window (observed on some Chrome builds).
+    ignoreGroupCreateProperties: false,
     tabs: new Map(),          // id -> { id, windowId, groupId, url, active }
     groups: new Map(),        // id -> { id, windowId, title }
     windows: new Map(),       // id -> { id, focused, type }
@@ -129,7 +132,11 @@ function createChromeFake() {
         } else {
           // real Chrome defaults a new group to the *current* (focused) window
           // and moves the tabs there — unless createProperties.windowId pins it
-          groupWindowId = createProperties?.windowId ?? state.focusedWindowId ?? 1;
+          groupWindowId =
+            createProperties?.windowId ?? state.focusedWindowId ?? 1;
+          if (state.ignoreGroupCreateProperties) {
+            groupWindowId = state.focusedWindowId ?? 1;
+          }
           targetGroupId = state.nextGroupId++;
           state.groups.set(targetGroupId, {
             id: targetGroupId,
@@ -181,6 +188,18 @@ function createChromeFake() {
         const g = state.groups.get(groupId);
         if (g) Object.assign(g, patch);
         return g ? { ...g } : {};
+      },
+      async move(groupId, { windowId }) {
+        const g = state.groups.get(groupId);
+        if (!g) throw new Error(`No group ${groupId}`);
+        if (!state.windows.has(windowId)) throw new Error(`No window ${windowId}`);
+        g.windowId = windowId;
+        for (const t of state.tabs.values()) {
+          if (t.groupId === groupId) {
+            t.windowId = windowId;
+          }
+        }
+        return { ...g, id: groupId };
       },
       onRemoved: { addListener() {} }
     },
@@ -315,7 +334,13 @@ async function run() {
     assert.equal(typeof first.windowId, "number", "createTab returns windowId");
     const session = await backend.store.getSession("obu-test");
     assert.equal(session.windowId, win.id, "session records the owned window");
-    assert.equal(session.chromeGroupId, null, "isolated session tracks tabs by window, not group");
+    assert.equal(
+      typeof session.chromeGroupId,
+      "number",
+      "isolated session establishes a tab group"
+    );
+    const group = fake.state.groups.get(session.chromeGroupId);
+    assert.equal(group?.windowId, win.id, "session group anchors in the owned window");
     const allTabIds = [...fake.state.tabs.keys()];
     const sessionTabIds = allTabIds.filter((id) => id >= first.id);
     for (const tabId of sessionTabIds) {
@@ -359,7 +384,17 @@ async function run() {
       [...sessionTabs].some((t) => t.id === userTab),
       "claimed tab is tracked as a session tab (window-based membership)"
     );
-    assert.equal(session.chromeGroupId, null, "isolated sessions create no tab group");
+    assert.equal(
+      typeof session.chromeGroupId,
+      "number",
+      "claim establishes a tab group in the isolated session"
+    );
+    assert.equal(
+      fake.state.groups.get(session.chromeGroupId)?.windowId,
+      session.windowId,
+      "claim group anchors in the owned window"
+    );
+    assert.equal(fake.state.tabs.get(userTab).groupId, session.chromeGroupId, "claimed tab joins the group");
   }
 
   // === Test 4: getUserTabs excludes session-owned window tabs ===
@@ -462,6 +497,32 @@ async function run() {
       [ua.id, a.id].sort(),
       "user-mode tab in an isolated session is closed with the session"
     );
+  }
+
+  // === Test 10: buggy Chrome (createProperties ignored) — group repaired into the owned window ===
+  {
+    const fake = createChromeFake();
+    const userWindow = fake.helpers.addWindow({ focused: true, type: "normal" });
+    fake.state.ignoreGroupCreateProperties = true;
+    const Backend = await loadBackground(bgSource, fake.chrome);
+    const backend = new Backend();
+    const a = await backend.createTab(sessionParams("obu-repair"));
+    const b = await backend.createTab(sessionParams("obu-repair"));
+    const session = await backend.store.getSession("obu-repair");
+    assert.equal(session.windowId, a.windowId, "owned window recorded");
+    assert.equal(a.windowId, b.windowId, "both tabs stay in the same owned window");
+    const group = fake.state.groups.get(session.chromeGroupId);
+    assert.ok(group, "session group exists after repair");
+    assert.equal(
+      group.windowId,
+      session.windowId,
+      "group anchored in the owned window despite buggy createProperties"
+    );
+    assert.equal(fake.state.tabs.get(a.id).groupId, session.chromeGroupId, "session tab joined the group");
+    const windowTabs = [...fake.state.tabs.values()].filter((t) => t.windowId === session.windowId);
+    assert.equal(windowTabs.length, 2, "no scaffold leftover in the owned window");
+    const userWindowTabs = [...fake.state.tabs.values()].filter((t) => t.windowId === userWindow);
+    assert.equal(userWindowTabs.length, 0, "no scaffold or session tab leaked into the user's window");
   }
 
   console.log("isolated-window tests passed");

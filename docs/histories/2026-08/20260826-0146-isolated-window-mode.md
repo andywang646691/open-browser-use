@@ -25,10 +25,11 @@
   session state;窗口失效自动重建;建窗自带的初始 tab 直接复用为会话第一个
   tab,保证 finalize 时窗口能真正关空。
 - **[扩展·claim 单窗口不变量]**: 隔离会话的成员关系以“归属窗口”追踪
-  （`tabs.query({windowId})` + `tabOrigins`），**不建 tab group**：真机验证发现
-  `chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab 拽过去、
-  `createProperties.windowId` 在部分 Chrome 构建上被无视，建组反而会把会话
-  标签页拖进用户窗口、让背景窗口被 Chrome 自动回收。`claimUserTab` 把
+  （`tabs.query({windowId})` + `tabOrigins`），并保留 tab group 可视化：
+  真机验证发现 `chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab
+  拽过去、`createProperties.windowId` 在部分 Chrome 构建上被无视，因此建组
+  用“替身 tab + `tabGroups.move` 修复 + 静默退化”的确定性方案（社区查证后
+  `tabGroups.move` 跨窗口搬组为可靠能力），真实会话 tab 全程不离开隔离窗口。`claimUserTab` 把
   用户 tab `chrome.tabs.move` 进隔离窗口；`getUserTabs` 排除所有 session
   自有窗口内的 tab。
 - **[扩展·finalize 收尾]**: 无保留时仅当隔离窗口已空才 `windows.remove`(绝不

@@ -1078,12 +1078,23 @@ class BrowserBackend {
     const session = await this.store.getSession(sessionId);
     session.tabOrigins[String(tabId)] = origin;
     if (typeof session.windowId === "number") {
-      // Isolated window: membership is the owned window itself — every tab in
-      // it is this session's. Deliberately do NOT create a tab group here:
-      // chrome.tabs.group pins the new group to the *current* (focused) window
-      // and drags the tab there (createProperties.windowId is ignored on some
-      // Chrome builds), which would pull every session tab into the user's
-      // focused window and let Chrome auto-close the emptied background window.
+      // Isolated window: membership is the owned window itself, and we try to
+      // ALSO keep a tab group inside it for visual organization. New groups are
+      // risky here: chrome.tabs.group pins a new group to the *current*
+      // (focused) window and drags the tab there (createProperties.windowId is
+      // ignored on some Chrome builds), which would pull a real session tab
+      // into the user's window and let Chrome auto-close the emptied background
+      // window. So group establishment uses a sacrificial scaffold tab and
+      // repairs with tabGroups.move() — a real session tab never leaves the
+      // owned window. If grouping is unavailable, fall back to window-based
+      // membership (no group).
+      if (await this.ensureSessionGroupInWindow(session, session.windowId)) {
+        try {
+          await chrome.tabs.group({ groupId: session.chromeGroupId, tabIds: [tabId] });
+        } catch {
+          session.chromeGroupId = null;
+        }
+      }
       await this.store.save();
       return;
     }
@@ -1106,6 +1117,71 @@ class BrowserBackend {
       color: "blue",
       collapsed: false
     });
+  }
+
+  // Establish (or confirm) a live tab group anchored inside the session's
+  // owned window. Returns true when the group is usable. Never lets a real
+  // session tab risk being dragged: a temporary scaffold tab absorbs any
+  // wrong-window placement, the group is repaired with tabGroups.move(), the
+  // scaffold is removed, and failures degrade to window-based membership.
+  async ensureSessionGroupInWindow(session, winId) {
+    if (typeof session.chromeGroupId === "number") {
+      try {
+        const group = await chrome.tabGroups.get(session.chromeGroupId);
+        if (group && group.windowId === winId) {
+          return true;
+        }
+      } catch {
+        // stale anchor: recreate below
+      }
+    }
+
+    const scaffold = await chrome.tabs
+      .create({ windowId: winId, active: false, url: "about:blank" })
+      .catch(() => null);
+    if (!hasTabId(scaffold)) {
+      return false;
+    }
+
+    let groupId = null;
+    try {
+      groupId = await chrome.tabs.group({
+        tabIds: [scaffold.id],
+        createProperties: { windowId: winId }
+      });
+      const created = await chrome.tabGroups.get(groupId).catch(() => null);
+      if (!created || created.windowId !== winId) {
+        // Chrome pinned the new group to the current (focused) window and
+        // dragged the scaffold there — relocate the whole group back.
+        const moved = await chrome.tabGroups
+          .move(groupId, { windowId: winId, index: -1 })
+          .catch(() => null);
+        const relocated = moved
+          ? await chrome.tabGroups.get(moved.id ?? groupId).catch(() => null)
+          : null;
+        if (!relocated || relocated.windowId !== winId) {
+          // Grouping is unreliable on this build: give up gracefully.
+          await chrome.tabs.ungroup([scaffold.id]).catch(() => {});
+          groupId = null;
+        }
+      }
+    } catch {
+      groupId = null;
+    } finally {
+      await chrome.tabs.remove(scaffold.id).catch(() => {});
+    }
+
+    if (groupId === null) {
+      session.chromeGroupId = null;
+      return false;
+    }
+    session.chromeGroupId = groupId;
+    await chrome.tabGroups.update(groupId, {
+      title: session.title,
+      color: "blue",
+      collapsed: false
+    }).catch(() => {});
+    return true;
   }
 
   async setSessionActiveTab(sessionId, tabId) {
