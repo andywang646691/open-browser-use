@@ -73,6 +73,14 @@ One-time fork setup:
    stays stable as long as the private key is not lost and the manifest key is
    not changed.
 
+   **This fork's signing key currently lives at `keys/extension-key.pem`**(repo
+   root, `chmod 600`, gitignored). Do not commit it, delete it, or overwrite it;
+   note that `git clean -x` removes ignored files, so keep a safe backup. Its
+   derived extension id is `ldnahhefbkmhjohgiamfnfppaooejmag` —
+   `chrome://extensions` should show exactly this. If the key is ever lost:
+   regenerate, update the manifest `key`, compute the new id, re-register the
+   native host with the new id, and re-load the extension.
+
 2. Load the extension unpacked: `chrome://extensions` → Developer mode →
    `Load unpacked` → `apps/chrome-extension/`. Disable or remove any previous
    store/beta copy so only one native messaging connection exists.
