@@ -315,6 +315,7 @@ async function run() {
     assert.equal(typeof first.windowId, "number", "createTab returns windowId");
     const session = await backend.store.getSession("obu-test");
     assert.equal(session.windowId, win.id, "session records the owned window");
+    assert.equal(session.chromeGroupId, null, "isolated session tracks tabs by window, not group");
     const allTabIds = [...fake.state.tabs.keys()];
     const sessionTabIds = allTabIds.filter((id) => id >= first.id);
     for (const tabId of sessionTabIds) {
@@ -353,9 +354,12 @@ async function run() {
       session.windowId,
       "claimed tab moved into the isolated window"
     );
-    const tab = fake.state.tabs.get(userTab);
-    const groupTabs = await fake.chrome.tabs.query({ groupId: tab.groupId });
-    assert.equal(groupTabs.length, 1, "claimed tab joined the session group");
+    const sessionTabs = await backend.getSessionTabs("obu-claim");
+    assert.ok(
+      [...sessionTabs].some((t) => t.id === userTab),
+      "claimed tab is tracked as a session tab (window-based membership)"
+    );
+    assert.equal(session.chromeGroupId, null, "isolated sessions create no tab group");
   }
 
   // === Test 4: getUserTabs excludes session-owned window tabs ===

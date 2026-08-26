@@ -24,9 +24,13 @@
   建专属后台窗口(不最小化、右下角小尺寸定位),`session.windowId` 持久化在
   session state;窗口失效自动重建;建窗自带的初始 tab 直接复用为会话第一个
   tab,保证 finalize 时窗口能真正关空。
-- **[扩展·claim 单窗口不变量]**: tab group 是窗口级的,所以 `claimUserTab` 在
-  隔离会话里先把用户 tab `chrome.tabs.move` 进隔离窗口再入组;`getUserTabs`
-  排除所有 session 自有窗口内的 tab,防止 agent 自 claim 工作页。
+- **[扩展·claim 单窗口不变量]**: 隔离会话的成员关系以“归属窗口”追踪
+  （`tabs.query({windowId})` + `tabOrigins`），**不建 tab group**：真机验证发现
+  `chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab 拽过去、
+  `createProperties.windowId` 在部分 Chrome 构建上被无视，建组反而会把会话
+  标签页拖进用户窗口、让背景窗口被 Chrome 自动回收。`claimUserTab` 把
+  用户 tab `chrome.tabs.move` 进隔离窗口；`getUserTabs` 排除所有 session
+  自有窗口内的 tab。
 - **[扩展·finalize 收尾]**: 无保留时仅当隔离窗口已空才 `windows.remove`(绝不
   连带关闭残留用户 tab);`deliverable` 先 move 到用户可见窗口再进
   `✅ Open Browser Use` 分组;`handoff` 保留时窗口存活供下轮继续。
@@ -48,11 +52,14 @@
 ### 🧠 Design Intent (Why)
 
 隔离默认化后,"session 拥有一个窗口"成为唯一基元:新标签页和 claim 的标签页
-都落进同一窗口,天然满足 tab group 单窗口不变量,也天然"不使用用户已有 tab"
-(除非用户显式 claim 或设 `OBU_WINDOW_MODE=user`)。不打扰靠
-`focused:false`+`active:false`+非最小化角落尺寸,不做任何 focus/restore
-调用。最关键的一个坑:建窗自带的初始空白 tab 若不复用会残留为无主标签页,
-导致 finalize 永远关不掉窗口,所以建窗时复用 `win.tabs[0]`。
+都落进同一窗口,天然"不使用用户已有 tab"(除非显式 claim 或设
+`OBU_WINDOW_MODE=user`)。不打扰靠 `focused:false`+`active:false`+非最小化
+角落尺寸,不做任何 focus/restore 调用。真机排障发现两个 Chrome 行为坑:
+① `windows.create` 自带的初始 about:blank 页若不复用会残留为无主标签页,导致
+finalize 永远关不掉窗口——建窗时复用 `win.tabs[0]`;② `tabs.group` 的新组
+默认落在*当前(聚焦)窗口*且会把 tab 拖过去(createProperties.windowId 不可靠),
+因此隔离模式下放弃 tab group、改用"归属窗口"追踪会话成员,tab group 仅保留
+给 user 模式与交付物分组。
 
 ### 📁 Files Modified
 

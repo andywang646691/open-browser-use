@@ -1076,12 +1076,17 @@ class BrowserBackend {
 
   async ensureSessionGroup(sessionId, tabId, origin) {
     const session = await this.store.getSession(sessionId);
-    // The tab's own window: new groups default to the *current* (focused)
-    // window, and tabs.group() moves the tab into the group's window — so
-    // without an explicit windowId every session tab would get dragged out of
-    // the isolated window into the user's focused one, and the freshly
-    // emptied isolated window would be auto-closed by Chrome.
-    const tab = await chrome.tabs.get(tabId);
+    session.tabOrigins[String(tabId)] = origin;
+    if (typeof session.windowId === "number") {
+      // Isolated window: membership is the owned window itself — every tab in
+      // it is this session's. Deliberately do NOT create a tab group here:
+      // chrome.tabs.group pins the new group to the *current* (focused) window
+      // and drags the tab there (createProperties.windowId is ignored on some
+      // Chrome builds), which would pull every session tab into the user's
+      // focused window and let Chrome auto-close the emptied background window.
+      await this.store.save();
+      return;
+    }
     let groupId = session.chromeGroupId;
     if (typeof groupId === "number") {
       try {
@@ -1092,13 +1097,9 @@ class BrowserBackend {
       }
     }
     if (typeof groupId !== "number") {
-      groupId = await chrome.tabs.group({
-        tabIds: [tabId],
-        createProperties: { windowId: typeof tab.windowId === "number" ? tab.windowId : undefined }
-      });
+      groupId = await chrome.tabs.group({ tabIds: [tabId] });
       session.chromeGroupId = groupId;
     }
-    session.tabOrigins[String(tabId)] = origin;
     await this.store.save();
     await chrome.tabGroups.update(groupId, {
       title: session.title,
@@ -1117,6 +1118,17 @@ class BrowserBackend {
 
   async getSessionTabs(sessionId) {
     const session = await this.store.getSession(sessionId);
+    if (typeof session.windowId === "number") {
+      // Isolated sessions track membership by owned window (no tab group).
+      try {
+        return (await chrome.tabs.query({ windowId: session.windowId })).filter(
+          (tab) => hasTabId(tab) && !tab.url?.startsWith("chrome://")
+        );
+      } catch {
+        await this.store.removeSession(sessionId);
+        return [];
+      }
+    }
     if (typeof session.chromeGroupId !== "number") {
       return [];
     }

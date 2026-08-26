@@ -222,9 +222,15 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   时自动重建。`window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
   --window-mode` flag）决定是否隔离：缺省/`isolated` 即隔离，`user` 退出
   隔离、沿用旧行为（新标签页进用户聚焦窗口）。一旦 session 建立了隔离
-  窗口就永久隔离（tab group 是窗口级的，跨窗口会组分裂）。`claimUserTab`
-  把用户 tab `chrome.tabs.move` 进隔离窗口再入组；`getUserTabs` 排除所有
-  session 自有窗口内的 tab，防止 agent 把自己的工作页当用户 tab 再 claim。
+  窗口就永久隔离。**隔离会话的成员关系以“归属窗口”追踪，不建 tab
+  group**——`chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab 拽
+  过去（`createProperties.windowId` 在部分 Chrome 构建上被无视），建组反而
+  会把每个会话标签页拖进用户聚焦窗口、让被掏空的背景窗口被 Chrome 自动
+  回收；因此 `createTab`/`getSessionTabs`/`finalizeTabs` 在隔离模式下改用
+  `tabs.query({windowId})` + `tabOrigins` 追踪会话成员，tab group 仅保留给
+  user 模式（旧行为）与交付物分组。`claimUserTab` 把用户 tab
+  `chrome.tabs.move` 进隔离窗口再入追踪；`getUserTabs` 排除所有 session
+  自有窗口内的 tab，防止 agent 把自己的工作页当用户 tab 再 claim。
   `finalizeTabs` 无保留时关闭该窗口（仅当窗口已空，绝不连带关闭残留的
   用户 tab）；`deliverable` tab 先移到用户可见窗口再进 `✅ Open Browser
   Use` 分组，`handoff` 保留时窗口存活以便下轮继续。
