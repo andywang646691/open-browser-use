@@ -224,10 +224,49 @@ class PreludeTest(unittest.TestCase):
         self.assertEqual(request["params"]["method"], "DOM.getBoxModel")
         self.assertEqual(request["params"]["commandParams"], {"backendNodeId": 5, "depth": 1})
 
-    def test_cdp_requires_current_tab(self):
+    def test_cdp_empty_session_errors(self):
+        # No session tabs at all -> auto-resume has nothing to work on.
         with self.assertRaises(RuntimeError) as ctx:
             self.sh.cdp("DOM.getDocument")
         self.assertIn("no current tab", str(ctx.exception))
+        self.assertIn("no tabs", str(ctx.exception))
+
+    def test_cdp_resumes_session_active_tab_when_unclaimed(self):
+        # A fresh process with no claim resumes the session's logical active
+        # tab reported by the extension (persisted across runs).
+        self.host.responses["getTabs"] = [
+            {"id": 5, "url": "https://x.com", "active": True},
+            {"id": 6, "url": "https://example.com", "active": False},
+        ]
+        self.sh.cdp("DOM.getDocument")
+        request = self.last("executeCdp")
+        self.assertEqual(request["params"]["target"]["tabId"], 5)
+        # Auto-resume consults session tabs only, never the user's tabs.
+        self.assertIsNone(
+            next((r for r in self.host.requests if r["method"] == "getUserTabs"), None)
+        )
+
+    def test_evaluate_resumes_session_active_tab(self):
+        self.host.responses["getTabs"] = [
+            {"id": 9, "url": "https://x.com", "active": True},
+            {"id": 10, "url": "https://example.com", "active": False},
+        ]
+        self.host.responses["executeCdp"] = {"result": {"type": "string", "value": "ok"}}
+        self.assertEqual(self.sh.evaluate("document.title"), "ok")
+        request = self.last("executeCdp")
+        self.assertEqual(request["params"]["target"]["tabId"], 9)
+
+    def test_explicit_claim_overrides_session_active(self):
+        # An explicit pick beats the resumed default even when another tab
+        # is reported active.
+        self.host.responses["getTabs"] = [
+            {"id": 5, "url": "https://x.com", "active": True},
+            {"id": 6, "url": "https://example.com", "active": False},
+        ]
+        self.sh.claim_tab(6)
+        self.sh.cdp("DOM.getDocument")
+        request = self.last("executeCdp")
+        self.assertEqual(request["params"]["target"]["tabId"], 6)
 
     def test_evaluate_unwraps_remote_object(self):
         self.host.responses["executeCdp"] = {

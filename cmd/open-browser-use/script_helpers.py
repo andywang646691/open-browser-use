@@ -150,6 +150,41 @@ def _attach(tab_id):
     _request("attach", {"tabId": tab_id})
 
 
+def _ensure_current_tab():
+    """Resolve the tab that cdp()/evaluate() act on.
+
+    Prefers the tab this process claimed via open_tab()/claim_tab(). When
+    none has been claimed yet, resumes the session's logical active tab: the
+    extension persists which session tab was last active (and heals a stale
+    pointer on read), so a fresh process keeps working on the same page
+    without repeating the list-and-claim ceremony. Only session tabs are
+    considered — user_tabs() is never touched here.
+
+    Raises RuntimeError only when there is genuinely nothing to work on:
+    the session has no tabs (e.g. finalize_tabs() already closed them), or
+    the session reports no single active tab.
+    """
+    global _CURRENT_TAB
+    if _CURRENT_TAB is not None:
+        return _CURRENT_TAB
+    session_tabs = tabs()
+    actives = [t for t in session_tabs if t.get("active")]
+    if len(actives) == 1:
+        _CURRENT_TAB = actives[0]["id"]
+        return _CURRENT_TAB
+    if not session_tabs:
+        raise RuntimeError(
+            "no current tab: this session has no tabs (finalize_tabs() may have "
+            "closed them); call open_tab(url) or claim_tab(id) first"
+        )
+    raise RuntimeError(
+        "no current tab: expected exactly one active session tab, got "
+        "{!r}; call claim_tab(id) to pick one explicitly".format(
+            [t.get("id") for t in session_tabs]
+        )
+    )
+
+
 def user_tabs():
     """List the user's real Chrome tabs.
 
@@ -263,11 +298,12 @@ def cdp(method, **params):
     -> {"nodes": [{"role": {"value": "heading"}, "name": {"value": "..."},
     "backendDOMNodeId": int, ...}]}.
 
-    Requires a current tab: call open_tab()/claim_tab() first.
+    Resumes the session's last active tab automatically when this process
+    has not claimed one yet; call open_tab()/claim_tab() to pick a specific
+    tab instead.
 
     Example: nodes = cdp("Accessibility.getFullAXTree")["nodes"]"""
-    if _CURRENT_TAB is None:
-        raise RuntimeError("no current tab: call open_tab(url) or claim_tab(id) first")
+    _ensure_current_tab()
     _attach(_CURRENT_TAB)
     return _request(
         "executeCdp",
@@ -282,9 +318,12 @@ def evaluate(js):
     reads and actions (.click(), focus, set value) that coordinates cannot
     express. Raises on JS exceptions.
 
+    Resumes the session's last active tab automatically when this process
+    has not claimed one yet; call open_tab()/claim_tab() to pick a specific
+    tab instead.
+
     Example: text = evaluate("document.querySelector('h1').textContent")"""
-    if _CURRENT_TAB is None:
-        raise RuntimeError("no current tab: call open_tab(url) or claim_tab(id) first")
+    _ensure_current_tab()
     _attach(_CURRENT_TAB)
     response = _request(
         "executeCdp",

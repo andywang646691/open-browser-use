@@ -57,10 +57,15 @@ When a later call looks different than you expected, re-`help()` it instead of
 guessing. This replaces the need for inline examples.
 
 ### How to use it
-- **Process model**: each `obu <<'PY'` run is a fresh process. The current-tab
-  pointer does not persist between runs — only tab membership persists via
-  `OBU_SESSION_ID`. So reclaim or open a tab at the top of *every* script
-  before any browser call.
+- **Process model**: each `obu <<'PY'` run is a fresh process and the local
+  tab pointer resets, but the session's *last active tab* persists —
+  `evaluate()`/`cdp()` resume it automatically, so you usually don't need to
+  reclaim a tab. Explicit `open_tab()`/`claim_tab()` is for picking a
+  *different* tab: target one URL among several session tabs, take over a
+  user tab (`user_tabs()`), or work in a session with no tabs yet. If the
+  session has no tabs at all (e.g. `finalize_tabs()` already closed them),
+  browser calls error with "no current tab" — that means there is genuinely
+  nothing to work on.
 - **Tabs**: never guess tab ids — list them first, then act on one. Session
   tabs open in a dedicated background window by default: unfocused,
   non-minimized, normal-sized (fills the screen), so the whole run never disturbs the user
