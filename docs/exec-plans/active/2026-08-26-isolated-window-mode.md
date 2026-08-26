@@ -122,3 +122,9 @@
   案例实锤)。修复:同会话已有 "agent" 记录时 claim 不再降级;且会话自有窗口内
   无 origin 记录的 tab 一律视为 agent(覆盖 claim 首建窗口的初始空白页),
   finalize 将其关闭。真机复验通过。
+- 2026-08-26:**API 职责评审(用户确认)**——`claim_tab`/`claimUserTab` 兼任双重职责
+  成立:① 接管用户标签页(契约本意);② 跨进程重选本会话的 agent 工作页
+  (唯一设置 current tab 的通道)。两种用途共享同一个扩展 handler,origin-flip
+  泄漏缺陷修复必须落在 handler 汇聚点(prelude / CLI claim-tab / action 模式
+  三个入口全覆盖);纯用户 tab 的 claim 语义不变(无记录 → origin=user)。
+  不引入独立 select_tab 助手,接受 API 的实用双重身份。
