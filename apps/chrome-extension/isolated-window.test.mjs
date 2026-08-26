@@ -29,6 +29,7 @@ function createChromeFake() {
     nextTabId: 1000,
     nextGroupId: 100,
     nextWindowId: 1,
+    focusedWindowId: null,
     tabs: new Map(),          // id -> { id, windowId, groupId, url, active }
     groups: new Map(),        // id -> { id, windowId, title }
     windows: new Map(),       // id -> { id, focused, type }
@@ -118,17 +119,31 @@ function createChromeFake() {
           state.tabs.delete(id);
         }
       },
-      async group({ groupId, tabIds }) {
+      async group({ groupId, tabIds, createProperties }) {
         const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
         let targetGroupId = groupId;
-        if (typeof targetGroupId !== "number") {
+        let groupWindowId = null;
+        if (typeof targetGroupId === "number") {
+          // real Chrome moves grouped tabs into the group's window
+          groupWindowId = state.groups.get(targetGroupId)?.windowId ?? null;
+        } else {
+          // real Chrome defaults a new group to the *current* (focused) window
+          // and moves the tabs there — unless createProperties.windowId pins it
+          groupWindowId = createProperties?.windowId ?? state.focusedWindowId ?? 1;
           targetGroupId = state.nextGroupId++;
-          const first = state.tabs.get(ids[0]);
-          state.groups.set(targetGroupId, { id: targetGroupId, windowId: first?.windowId ?? 1, title: "" });
+          state.groups.set(targetGroupId, {
+            id: targetGroupId,
+            windowId: groupWindowId,
+            title: ""
+          });
         }
         for (const id of ids) {
           const t = state.tabs.get(id);
-          if (t) t.groupId = targetGroupId;
+          if (!t) continue;
+          if (typeof groupWindowId === "number" && t.windowId !== groupWindowId) {
+            t.windowId = groupWindowId;
+          }
+          t.groupId = targetGroupId;
         }
         return targetGroupId;
       },
@@ -151,8 +166,16 @@ function createChromeFake() {
         if (!g) throw new Error(`No group ${groupId}`);
         return { ...g };
       },
-      async query() {
-        return [...state.groups.values()].map((g) => ({ ...g }));
+      async query(filter) {
+        const out = [];
+        for (const g of state.groups.values()) {
+          if (filter) {
+            if (typeof filter.windowId === "number" && g.windowId !== filter.windowId) continue;
+            if (typeof filter.title === "string" && g.title !== filter.title) continue;
+          }
+          out.push({ ...g });
+        }
+        return out;
       },
       async update(groupId, patch) {
         const g = state.groups.get(groupId);
@@ -226,6 +249,9 @@ function createChromeFake() {
 
   function addWindow({ id = state.nextWindowId++, focused = false, type = "normal" } = {}) {
     state.windows.set(id, { id, focused, type });
+    if (focused) {
+      state.focusedWindowId = id;
+    }
     return id;
   }
 

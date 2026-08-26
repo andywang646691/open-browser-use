@@ -1076,6 +1076,12 @@ class BrowserBackend {
 
   async ensureSessionGroup(sessionId, tabId, origin) {
     const session = await this.store.getSession(sessionId);
+    // The tab's own window: new groups default to the *current* (focused)
+    // window, and tabs.group() moves the tab into the group's window — so
+    // without an explicit windowId every session tab would get dragged out of
+    // the isolated window into the user's focused one, and the freshly
+    // emptied isolated window would be auto-closed by Chrome.
+    const tab = await chrome.tabs.get(tabId);
     let groupId = session.chromeGroupId;
     if (typeof groupId === "number") {
       try {
@@ -1086,7 +1092,10 @@ class BrowserBackend {
       }
     }
     if (typeof groupId !== "number") {
-      groupId = await chrome.tabs.group({ tabIds: [tabId] });
+      groupId = await chrome.tabs.group({
+        tabIds: [tabId],
+        createProperties: { windowId: typeof tab.windowId === "number" ? tab.windowId : undefined }
+      });
       session.chromeGroupId = groupId;
     }
     session.tabOrigins[String(tabId)] = origin;
