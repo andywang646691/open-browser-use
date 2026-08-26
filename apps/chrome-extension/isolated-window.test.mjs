@@ -285,6 +285,8 @@ async function run() {
     assert.equal(win.focused, false, "created window must not steal focus");
     assert.equal(win.type, "normal");
     assert.equal(typeof win.width, "number", "created window is sized");
+    assert.equal(first.windowId, win.id, "createTab result carries the owned windowId");
+    assert.equal(typeof first.windowId, "number", "createTab returns windowId");
     const session = await backend.store.getSession("obu-test");
     assert.equal(session.windowId, win.id, "session records the owned window");
     const allTabIds = [...fake.state.tabs.keys()];
