@@ -39,7 +39,8 @@ function createChromeFake() {
     storage: {},
     removedTabs: [],
     removedWindows: [],
-    createdWindows: []
+    createdWindows: [],
+    cdpCommands: []
   };
 
   function windowTabCount(windowId) {
@@ -265,6 +266,11 @@ function createChromeFake() {
     debugger: {
       async attach() {},
       async detach() {},
+      async sendCommand(target, method, commandParams = {}) {
+        const tabId = typeof target === "object" ? target.tabId : target;
+        state.cdpCommands.push({ tabId, method, commandParams });
+        return {};
+      },
       onEvent: { addListener() {} },
       onDetach: { addListener() {} }
     },
@@ -586,6 +592,30 @@ async function run() {
     assert.ok(
       !fake.state.removedWindows.includes(winId),
       "window kept because the released user tab still lives in it"
+    );
+  }
+
+  // === Test 13: attaching a session tab emulates visible page visibility ===
+  {
+    const fake = createChromeFake();
+    fake.helpers.addWindow({ focused: true, type: "normal" });
+    const Backend = await loadBackground(bgSource, fake.chrome);
+    const backend = new Backend();
+    const tab = await backend.createTab(sessionParams("obu-vis"));
+    await backend.attach({ ...sessionParams("obu-vis"), tabId: tab.id });
+    const emu = fake.state.cdpCommands.filter(
+      (c) => c.method === "Emulation.setPageVisibilityOverride"
+    );
+    assert.equal(emu.length, 1, "fresh attach emulates page visibility once");
+    assert.equal(emu[0].commandParams.visibilityState, "visible", "emulated state is visible");
+    // Already-attached tabs are a no-op: no repeated emulation command per call.
+    await backend.attach({ ...sessionParams("obu-vis"), tabId: tab.id });
+    assert.equal(
+      fake.state.cdpCommands.filter(
+        (c) => c.method === "Emulation.setPageVisibilityOverride"
+      ).length,
+      1,
+      "emulation not re-issued while the tab stays attached"
     );
   }
 

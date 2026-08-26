@@ -73,6 +73,14 @@ guessing. This replaces the need for inline examples.
   claim the user's existing tabs unless they explicitly asked for that page —
   `user_tabs()` already excludes OBU's own window so session tabs can't be
   mistaken for user tabs.
+- **Don't disturb the user**: the default isolated background window exists
+  so the whole run never touches the user's screen, focus, or tabs — keep it
+  that way, and never use `OBU_WINDOW_MODE="user"` for convenience. OBU
+  emulates page visibility on session tabs automatically (Chrome 129+; sites
+  that lazy-load only when the page is visible work as if foregrounded)
+  without stealing focus. If the only working path visibly disturbs the
+  user (focus steal, window/tab movement, user-window tabs), **ask the user
+  first** and get explicit agreement before doing it.
 - **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
   when the tree lacks the element.
 - **Act**: via `evaluate(js)` — click, focus, set values — and always verify the
@@ -125,6 +133,10 @@ no memory commands; read with your own tools, write via one helper.
 
 ## Hard rules
 - The user's real Chrome: never inspect cookies, passwords, session stores.
+- Never steal focus or visibly rearrange the user's windows/tabs
+  (bringToFront, moves, resizes, tabs in their focused window). If a task
+  seems to require it, try a non-disruptive alternative first;
+  if none exists, ask the user before doing it.
 - Ask before uploads, clipboard, form submits, purchases, sending, deleting, or other externally visible changes.
 - Login walls: stop and ask; signed-in SSO may be used as-is.
 - Ask before installing extensions or launching browsers.
