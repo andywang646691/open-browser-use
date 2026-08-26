@@ -104,3 +104,10 @@
 - 2026-08-26:混合会话(隔离 session 内显式 `window_mode="user"`)的标签页
   不在会话窗口,窗口式查询会漏掉导致 finalize 残留——`getSessionTabs` 用
   `tabOrigins` 并集兜住,冒烟确认零残留。
+- 2026-08-26:**外部查证**(用户要求核实他人反馈)——Chromium 主干源码
+  `TabsGroupFunction::Run` 确认 `createProperties.windowId` 在主干被尊重,
+  省缺时默认“当前窗口”,且“把 tab 移入目标窗口”是设计行为;本机显式传参
+  仍被无视属于版本行为差异。无精确同款 issue(最接近:Claude Code
+  #63934“新窗口建组报 Grouping is not supported”,ai-group-tabs #84
+  “有时必须传 windowId”),均指向该 API 跨版本行为不一致——因此
+  “隔离会话不建组”的判断仍是更稳的工程选择。
