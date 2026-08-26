@@ -28,6 +28,10 @@
   `install-manifest --extension-id <fork-id>` 注册 native host → 重启 Chrome),
   并注明禁用旧 store/beta 副本以避免双 socket。
 - **[未入库]**: 私钥只存在本机 `keys/extension-key.pem`,不入库、不进聊天。
+- **[版本对齐]**: manifest 版本由 0.1.41 提升到 0.1.42,与 CLI 版本常量
+  (`cmd/open-browser-use/main.go` 的 `version = "0.1.42"`)对齐——否则 unpacked
+  分叉版与旧商店版同号无法区分,且 `obu` 无参运行会报
+  “Installed v0.1.41, but CLI expects v0.1.42”。
 
 ### 🧠 Design Intent (Why)
 
