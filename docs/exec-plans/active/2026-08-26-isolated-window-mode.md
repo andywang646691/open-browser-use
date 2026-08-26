@@ -79,7 +79,7 @@
 - [x] 扩展侧实现(窗口模型 + claim + user_tabs 排除 + finalize 关窗)。
 - [x] CLI/Python/SDK 透传。
 - [x] 单测 + `make ci` 全量通过。
-- [ ] 真浏览器冒烟验证。
+- [x] 真浏览器冒烟验证(六项检查全绿,含 user 模式对照与零残留确认)。
 - [x] SKILL/ARCHITECTURE 文档同步(history 记录随提交)。
 
 ## 决策记录
@@ -97,3 +97,10 @@
 - 2026-08-26:`windows.create` 自带一个初始 about:blank 标签页,不复用的话会残留为
   无主空白页、导致 finalize 永远关不掉窗口——因此建窗后把初始 tab 直接复用作会话
   第一个 tab(建窗时返回 created 标志,调用方复用 win.tabs[0])。
+- 2026-08-26:**真机排障结论**——`chrome.tabs.group` 把新组钉在*当前(聚焦)窗口*
+  并把 tab 拽过去,`createProperties.windowId` 在这台 Chrome 上被无视;探针实测
+  (组落窗 + 归位反制)证实后,确定隔离会话**不建 tab group**,成员关系改用
+  “归属窗口查询 + tabOrigins 并集”,tab group 仅保留给 user 模式与交付物。
+- 2026-08-26:混合会话(隔离 session 内显式 `window_mode="user"`)的标签页
+  不在会话窗口,窗口式查询会漏掉导致 finalize 残留——`getSessionTabs` 用
+  `tabOrigins` 并集兜住,冒烟确认零残留。
