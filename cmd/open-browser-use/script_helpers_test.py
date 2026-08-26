@@ -16,6 +16,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +44,7 @@ class FakeHost(threading.Thread):
         # id correlation loop.
         self.extra_frames = {}
         self.requests = []
+        self._conn = None
         self._ready = threading.Event()
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(self.sock_path)
@@ -51,6 +53,7 @@ class FakeHost(threading.Thread):
     def run(self):
         self._ready.set()
         conn, _ = self.server.accept()
+        self._conn = conn
         with conn:
             while True:
                 header = self._read_exact(conn, 4)
@@ -95,6 +98,14 @@ class FakeHost(threading.Thread):
             chunks.append(chunk)
             remaining -= len(chunk)
         return b"".join(chunks)
+
+    def push(self, frame):
+        """Send a frame to the attached client from outside the request loop
+        (e.g. while the client is blocked in wait_for_event)."""
+        if self._conn is None:
+            raise RuntimeError("host connection not established yet")
+        payload = json.dumps(frame).encode("utf-8")
+        self._conn.sendall(struct.pack("@I", len(payload)) + payload)
 
 
 class PreludeTest(unittest.TestCase):
@@ -310,9 +321,110 @@ class PreludeTest(unittest.TestCase):
         tree = self.sh.cdp("Accessibility.getFullAXTree")["nodes"]
         self.assertEqual(tree[0]["role"]["value"], "heading")
 
+    def _on_cdp_event(self, inner_method, inner_params=None, tab_id=7):
+        return {
+            "jsonrpc": "2.0",
+            "method": "onCDPEvent",
+            "params": {
+                "source": {"tabId": tab_id},
+                "method": inner_method,
+                "params": inner_params or {},
+            },
+        }
+
+    def test_wait_for_event_consumes_queued_notifications(self):
+        # Events that arrived while another helper's response was being read
+        # must not be lost: _request queues them, wait_for_event drains them.
+        self.host.responses["getUserTabs"] = [{"id": 7, "url": "https://a"}]
+        self.host.extra_frames["getUserTabs"] = [
+            self._on_cdp_event(
+                "Network.responseReceived",
+                {"response": {"url": "https://x.com/i/api/graphql/x/HomeTimeline", "status": 200}},
+            )
+        ]
+        self.sh.user_tabs()
+        ev = self.sh.wait_for_event("Network.responseReceived", timeout=5)
+        self.assertEqual(ev["response"]["status"], 200)
+        self.assertIn("HomeTimeline", ev["response"]["url"])
+
+    def test_wait_for_event_predicate_filters_queued_events(self):
+        # Non-matching events are counted (and visible in the timeout message)
+        # but skipped; a matching later event wins.
+        self.host.responses["getUserTabs"] = [{"id": 7, "url": "https://a"}]
+        self.host.extra_frames["getUserTabs"] = [
+            self._on_cdp_event(
+                "Network.responseReceived",
+                {"response": {"url": "https://other.example/a", "status": 404}},
+            ),
+            self._on_cdp_event(
+                "Network.responseReceived",
+                {"response": {"url": "https://x.com/i/api/graphql/y/HomeTimeline", "status": 200}},
+            ),
+        ]
+        self.sh.user_tabs()
+        ev = self.sh.wait_for_event(
+            "Network.responseReceived",
+            predicate=lambda e: "HomeTimeline" in e["params"]["response"]["url"],
+            timeout=5,
+        )
+        self.assertEqual(ev["response"]["status"], 200)
+
+    def test_wait_for_event_picks_up_event_while_waiting(self):
+        # The common shape: trigger first, then block; the event arrives after
+        # the helper started reading the socket.
+        self.sh.user_tabs()  # establishes the connection before the waiter runs
+        result = {}
+
+        def waiter():
+            result["ev"] = self.sh.wait_for_event("Page.loadEventFired", timeout=10)
+
+        t = threading.Thread(target=waiter)
+        t.start()
+        time.sleep(0.2)
+        self.host.push(self._on_cdp_event("Page.loadEventFired", {"ts": 1}))
+        t.join(10)
+        self.assertIn("ev", result)
+        self.assertEqual(result["ev"]["ts"], 1)
+
+    def test_wait_for_event_timeout_reports_diagnostics(self):
+        # A timeout must say what was seen (and hint at Network.enable when no
+        # Network.* events ever arrived) so the caller can fix the setup.
+        self.sh.user_tabs()
+        self.host.push(self._on_cdp_event("Log.entryAdded", {"entry": {"level": "error"}}))
+        self.host.push({"jsonrpc": "2.0", "method": "heartbeat", "params": {"at": "x"}})
+        with self.assertRaises(RuntimeError) as ctx:
+            self.sh.wait_for_event("Network.responseReceived", timeout=0.3)
+        msg = str(ctx.exception)
+        self.assertIn("Network.responseReceived", msg)
+        self.assertIn("timed out", msg)
+        self.assertIn("Log.entryAdded", msg)  # diagnostic lists what was seen
+        self.assertIn('Network.enable', msg)  # missing-domain hint for Network.*
+
+    def test_wait_for_event_rejects_bad_args(self):
+        with self.assertRaises(ValueError):
+            self.sh.wait_for_event("", timeout=5)
+        with self.assertRaises(ValueError):
+            self.sh.wait_for_event("Network.responseReceived", timeout=0)
+
+    def test_wait_for_event_predicate_raise_gets_reported(self):
+        self.sh.user_tabs()
+        self.host.push(self._on_cdp_event("Page.loadEventFired"))
+        with self.assertRaises(RuntimeError) as ctx:
+            self.sh.wait_for_event(
+                "Page.loadEventFired",
+                predicate=lambda e: e["params"]["missing"],
+                timeout=5,
+            )
+        self.assertIn("predicate raised", str(ctx.exception))
+
     def test_help_lists_helpers(self):
         self.sh._help()
         self.assertTrue(self.sh.open_tab.__doc__.startswith("Open a new session tab"))
+        self.assertIn("wait_for_event", {
+            "user_tabs", "tabs", "claim_tab", "open_tab", "navigate",
+            "history", "name_session", "cdp", "evaluate", "wait_for_event",
+            "memory_put", "close_tab", "finalize_tabs",
+        })
 
 
 if __name__ == "__main__":

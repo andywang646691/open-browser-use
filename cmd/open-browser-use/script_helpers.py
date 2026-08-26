@@ -18,6 +18,7 @@ import socket
 import struct
 import sys
 import time
+from collections import deque
 
 _SESSION_ID = os.environ.get("OBU_SESSION_ID", "obu-cli")
 _TURN_ID = "{}-{}".format(_SESSION_ID, time.time_ns())
@@ -31,6 +32,10 @@ _CONN = None
 _CURRENT_TAB = None
 _NEXT_REQ_ID = 0
 _TIMEOUT = float(os.environ.get("OBU_SCRIPT_TIMEOUT_SECONDS", "10"))
+# Bounded tail of id-less notification frames (onCDPEvent / heartbeat) that
+# arrived while a request was being answered. wait_for_event() drains it first,
+# so events that landed during other helper calls are not lost.
+_EVENT_QUEUE = deque(maxlen=500)
 
 
 def _read_exact(conn, count):
@@ -45,14 +50,9 @@ def _read_exact(conn, count):
     return b"".join(chunks)
 
 
-def _request(method, params=None):
-    """Send one JSON-RPC request and return the matching result payload.
-
-    Frames are matched by request id: notification frames (no id, e.g. the
-    relay's onCDPEvent/heartbeat broadcasts) and any other stray frames are
-    skipped, never misread as this request's result.
-    """
-    global _CONN, _NEXT_REQ_ID
+def _get_conn():
+    """Lazily open the host socket and return it."""
+    global _CONN
     if _SOCKET_ERROR:
         raise RuntimeError("obu: " + _SOCKET_ERROR)
     if not _SOCKET_PATH:
@@ -66,6 +66,21 @@ def _request(method, params=None):
             _CONN.connect(_SOCKET_PATH)
         except OSError as exc:
             raise RuntimeError("cannot connect to obu socket {}: {}".format(_SOCKET_PATH, exc))
+    return _CONN
+
+
+def _request(method, params=None):
+    """Send one JSON-RPC request and return the matching result payload.
+
+    Frames are matched by request id: id-less notification frames (the relay's
+    onCDPEvent/heartbeat broadcasts) are queued for wait_for_event() instead of
+    being dropped; any other stray frames are skipped, never misread as this
+    request's result.
+    """
+    global _NEXT_REQ_ID
+    if _SOCKET_ERROR:
+        raise RuntimeError("obu: " + _SOCKET_ERROR)
+    conn = _get_conn()
     _NEXT_REQ_ID += 1
     request_id = "obu-script-{}".format(_NEXT_REQ_ID)
     request = {
@@ -85,8 +100,12 @@ def _request(method, params=None):
         length = struct.unpack("@I", header)[0]
         body = json.loads(_read_exact(_CONN, length).decode("utf-8"))
         if body.get("id") != request_id:
-            # Notifications (no id) or another client's frame: skip and keep
-            # reading until this request's response arrives.
+            if not body.get("id"):
+                # Id-less notification (onCDPEvent/heartbeat broadcast): keep
+                # it for wait_for_event() instead of dropping it.
+                _EVENT_QUEUE.append(body)
+            # Another client's response frame: skip and keep reading until
+            # this request's response arrives.
             continue
         if "error" in body:
             message = body["error"]
@@ -281,6 +300,115 @@ def evaluate(js):
     return remote.get("value")
 
 
+def wait_for_event(method, predicate=None, timeout=30.0):
+    """Block until a CDP event with the given method arrives; return its params.
+
+    Events are the id-less notification frames the relay broadcasts (e.g.
+    onCDPEvent). Only events received while this script process is alive can be
+    observed, so the typical shape is: enable the CDP domain you need, trigger
+    the action (reload / click / navigate), then wait:
+
+        cdp("Network.enable")
+        evaluate("location.reload()")
+        ev = wait_for_event("Network.responseReceived",
+                            predicate=lambda e: "HomeTimeline" in e["params"]["response"]["url"])
+        body = cdp("Network.getResponseBody", requestId=ev["requestId"])["body"]
+
+    method: CDP event name, e.g. "Network.responseReceived",
+    "Runtime.consoleAPICalled", "Page.loadEventFired".
+    predicate: optional callable(event) -> bool, where event is
+    {"source": {"tabId": int, ...}, "method": str, "params": dict}; omit to
+    match any event of that method.
+
+    Returns the inner params dict of the first matching event. Raises after
+    `timeout` seconds with a diagnostic listing the events that were seen, so a
+    missing-timeout (e.g. forgot to cdp("Network.enable")) is self-explanatory.
+
+    While blocked, this helper reads the host socket itself: do not fire other
+    helpers from another thread concurrently.
+    """
+    if not isinstance(method, str) or not method:
+        raise ValueError("method is required, e.g. 'Network.responseReceived'")
+    timeout = float(timeout)
+    if timeout <= 0:
+        raise ValueError("timeout must be > 0, got {!r}".format(timeout))
+
+    conn = _get_conn()
+    seen = {}
+
+    def _incoming(frame):
+        """Map one raw frame to a CDP event, or None if it is not a match."""
+        if frame.get("method") != "onCDPEvent":
+            return None
+        params = frame.get("params") or {}
+        if params.get("method") != method:
+            return None
+        event = {"source": params.get("source"), "method": method, "params": params.get("params")}
+        if predicate is None:
+            return event
+        try:
+            return event if predicate(event) else None
+        except Exception as exc:
+            raise RuntimeError("wait_for_event predicate raised: {!r}".format(exc))
+
+    def _count(frame):
+        params = frame.get("params") or {}
+        name = (
+            params.get("method")
+            if frame.get("method") == "onCDPEvent"
+            else (frame.get("method") or "frame")
+        )
+        seen[name] = seen.get(name, 0) + 1
+
+    def _drain():
+        """Consume queued frames (FIFO) until a match; count the rest."""
+        while _EVENT_QUEUE:
+            frame = _EVENT_QUEUE.popleft()
+            match = _incoming(frame)
+            if match is not None:
+                return match
+            _count(frame)
+        return None
+
+    match = _drain()
+    deadline = time.monotonic() + timeout
+    while match is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        conn.settimeout(remaining)
+        try:
+            header = _read_exact(conn, 4)
+            if not header:
+                raise RuntimeError(
+                    "obu socket closed while waiting for event {!r}".format(method)
+                )
+            length = struct.unpack("@I", header)[0]
+            body = json.loads(_read_exact(conn, length).decode("utf-8"))
+        except socket.timeout:
+            break
+        if body.get("id"):
+            # Response to a request from another thread/session: not ours.
+            continue
+        match = _incoming(body)
+        if match is None:
+            _count(body)
+    conn.settimeout(_TIMEOUT)
+    if match is not None:
+        return match["params"]
+    top = ", ".join(
+        "{} x{}".format(name, count)
+        for name, count in sorted(seen.items(), key=lambda kv: -kv[1])[:5]
+    ) or "(none)"
+    hint = ""
+    if method.startswith("Network.") and not any(k.startswith("Network.") for k in seen):
+        hint = ' ; hint: call cdp(\"Network.enable\") before the action that fires the event'
+    raise RuntimeError(
+        "wait_for_event({!r}) timed out after {:.1f}s: received {} events, none matched "
+        "(methods seen: {}){}".format(method, timeout, sum(seen.values()), top, hint)
+    )
+
+
 def finalize_tabs(keep=None):
     """Close the session's non-kept tabs. Call exactly once as the last step.
 
@@ -382,6 +510,7 @@ def _help():
         "name_session",
         "cdp",
         "evaluate",
+        "wait_for_event",
         "memory_put",
         "close_tab",
         "finalize_tabs",

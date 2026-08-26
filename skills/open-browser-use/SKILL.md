@@ -76,6 +76,19 @@ guessing. This replaces the need for inline examples.
   observable, poll for it (loop with a bounded retry budget until it holds)
   instead of a blind `time.sleep`. Use a short settle delay only where no
   condition can be observed.
+- **Observe CDP events for data the DOM won't show**: `wait_for_event(method,
+  predicate=...)` blocks until a CDP event arrives (network responses, JS
+  console errors, page events) and returns its params. Enable the domain
+  first, then trigger the action, then wait — e.g. capture a timeline
+  response instead of scraping a virtual-scrolled DOM:
+  ```py
+  cdp("Network.enable")
+  evaluate("location.reload()")
+  ev = wait_for_event("Network.responseReceived",
+                      predicate=lambda e: "HomeTimeline" in e["params"]["response"]["url"])
+  body = cdp("Network.getResponseBody", requestId=ev["requestId"])["body"]
+  ```
+  `help(wait_for_event)` for the event shape and timeout diagnostics.
 - **Coordinates / raw CDP**: only when DOM/JS access isn't enough; `help()` on
   the relevant helpers for the exact steps and their order.
 
