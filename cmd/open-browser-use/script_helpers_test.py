@@ -290,6 +290,15 @@ class PreludeTest(unittest.TestCase):
             self.sh.evaluate("nope()")
         self.assertIn("evaluate threw", str(ctx.exception))
 
+    def test_session_inject_sends_template(self):
+        self.host.responses["injectMainScript"] = {
+            "id": "obu-main-inject-test-session", "origins": ["https://x.com/*"]
+        }
+        out = self.sh.session_inject("visibility")
+        request = self.last("injectMainScript")
+        self.assertEqual(request["params"]["script"], "visibility")
+        self.assertEqual(out["id"], "obu-main-inject-test-session")
+
     def test_finalize_tabs_defaults_empty_keep(self):
         self.sh.finalize_tabs()
         request = self.last("finalizeTabs")

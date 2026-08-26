@@ -439,6 +439,59 @@ class BrowserBackend {
     return { ...toBrowserTab(tab), active: true };
   }
 
+  async injectMainScript(params) {
+    const session = await this.requireSession(params);
+    if (params.script !== "visibility") {
+      throw new Error(
+        `injectMainScript: unknown template ${JSON.stringify(params.script)}; supported: "visibility"`
+      );
+    }
+    const sessionState = await this.store.getSession(session.sessionId);
+    const tabs = await this.getSessionTabs(session.sessionId);
+    const origins = [
+      ...new Set(
+        tabs
+          .map((tab) => {
+            try {
+              const u = new URL(tab.url ?? "");
+              if (u.protocol === "http:" || u.protocol === "https:") {
+                return u.origin + "/*";
+              }
+            } catch {}
+            return null;
+          })
+          .filter(Boolean)
+      )
+    ];
+    if (origins.length === 0) {
+      throw new Error(
+        "injectMainScript: no HTTP(S) session tab to scope the injection; navigate a session tab first"
+      );
+    }
+    // id is session-scoped; re-register (unregister first) makes the call
+    // idempotent when matches change (tab navigated to another origin).
+    const injectId = `obu-main-inject-${session.sessionId}`;
+    await chrome.scripting.unregisterContentScripts({ ids: [injectId] }).catch(() => {});
+    const scripts = sessionState.mainInjectScripts ?? [];
+    if (!scripts.includes(injectId)) {
+      scripts.push(injectId);
+    }
+    sessionState.mainInjectScripts = scripts;
+    await this.store.save();
+    await chrome.scripting.registerContentScripts([
+      {
+        id: injectId,
+        matches: origins,
+        js: ["session-inject-main.js"],
+        runAt: "DOCUMENT_START",
+        world: "MAIN",
+        allFrames: false,
+        persistAcrossSessions: false
+      }
+    ]);
+    return { id: injectId, origins };
+  }
+
   async finalizeTabs(params) {
     const session = await this.requireSession(params);
     if (!Array.isArray(params.keep)) {
@@ -491,6 +544,14 @@ class BrowserBackend {
       } else {
         userTabsToRelease.push(tab.id);
       }
+    }
+    // Tear down MAIN-world injections for this session before closing tabs.
+    if (Array.isArray(sessionState.mainInjectScripts) && sessionState.mainInjectScripts.length) {
+      await chrome.scripting
+        .unregisterContentScripts({ ids: sessionState.mainInjectScripts })
+        .catch(() => {});
+      delete sessionState.mainInjectScripts;
+      await this.store.save();
     }
     // Detach every disposition, including handoff tabs we keep alive: leaving a
     // tab attached keeps Chrome's "started debugging this browser" banner up

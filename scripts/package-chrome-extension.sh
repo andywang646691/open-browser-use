@@ -126,6 +126,7 @@ EOF
     manifest.json \
     background.js \
     content-cursor.js \
+    session-inject-main.js \
     icons/icon-16.png \
     icons/icon-32.png \
     icons/icon-48.png \
