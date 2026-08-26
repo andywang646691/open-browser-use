@@ -24,6 +24,11 @@
   建专属后台窗口(不最小化、右下角小尺寸定位),`session.windowId` 持久化在
   session state;窗口失效自动重建;建窗自带的初始 tab 直接复用为会话第一个
   tab,保证 finalize 时窗口能真正关空。
+- **[扩展·finalize 泄漏修复]**: 跨进程复用会话 tab 的惯例是每轮 `claim_tab`
+  重选工作页,但 claim 曾无条件把 origin 置为 “user”,导致 finalize 把 agent
+  工作页当用户页“释放”而非关闭,tab 与隔离窗口残留(linux.do 实测复现)。
+  修复:同会话已有 agent 记录时 claim 保留原 origin;会话自有窗口内无 origin
+  记录的 tab 视为 agent(覆盖 claim 首建窗口的初始空白页)。
 - **[扩展·claim 单窗口不变量]**: 隔离会话的成员关系以“归属窗口”追踪
   （`tabs.query({windowId})` + `tabOrigins`），并保留 tab group 可视化：
   真机验证发现 `chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab

@@ -116,3 +116,9 @@
   因此“**先让真实 tab 归组、再删替身**”是硬约束。假件已模拟真实 Chrome
   (空组解散、对已解散组调用抛错)以锁住该回归;真机冒烟确认工作 tab
   共用一个真实正数 groupId、组锚定在隔离窗口内。
+- 2026-08-26:**finalize 泄漏修复(外部 agent 实测触发)**——跨进程复用会话 tab 时 agent
+  惯用 `claim_tab` 重新选中自己的工作页,但 `claimUserTab` 无条件把 origin 写成
+  "user" → finalize 按用户页"释放"而非关闭,工作 tab 与隔离窗口残留(linux.do
+  案例实锤)。修复:同会话已有 "agent" 记录时 claim 不再降级;且会话自有窗口内
+  无 origin 记录的 tab 一律视为 agent(覆盖 claim 首建窗口的初始空白页),
+  finalize 将其关闭。真机复验通过。

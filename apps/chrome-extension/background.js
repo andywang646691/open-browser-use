@@ -424,7 +424,12 @@ class BrowserBackend {
     if (await this.sessionUsesIsolatedWindow(sessionState, params)) {
       await this.moveTabIntoSessionWindow(sessionState, tab);
     }
-    await this.ensureSessionGroup(session.sessionId, tab.id, "user");
+    // Never downgrade a session's own work tab on re-claim: an agent-created
+    // tab re-claimed by the same session must stay "agent" so finalize closes
+    // it, instead of flipping to "user" and leaking the tab and its window.
+    const origin =
+      sessionState.tabOrigins[String(tab.id)] === "agent" ? "agent" : "user";
+    await this.ensureSessionGroup(session.sessionId, tab.id, origin);
     await this.setSessionActiveTab(session.sessionId, tab.id);
     return { ...toBrowserTab(tab), active: true };
   }
@@ -472,7 +477,11 @@ class BrowserBackend {
         deliverableTabs.push(tab.id);
         continue;
       }
-      if (sessionState.tabOrigins[String(tab.id)] === "agent") {
+      // In the session's own window, an untracked tab is always ours (created
+      // by us, e.g. the initial about:blank of a claim-created window) — only
+      // tabs explicitly tracked as "user" are the user's and must be released.
+      const isAgent = sessionState.tabOrigins[String(tab.id)] !== "user";
+      if (isAgent) {
         agentTabsToClose.push(tab.id);
       } else {
         userTabsToRelease.push(tab.id);

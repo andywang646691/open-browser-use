@@ -540,6 +540,46 @@ async function run() {
     assert.equal(userWindowTabs.length, 0, "no scaffold or session tab leaked into the user's window");
   }
 
+  // === Test 11: re-claiming a session's own tab keeps agent origin — finalize still closes it ===
+  {
+    const fake = createChromeFake();
+    fake.helpers.addWindow({ focused: true, type: "normal" });
+    const Backend = await loadBackground(bgSource, fake.chrome);
+    const backend = new Backend();
+    const tab = await backend.createTab(sessionParams("obu-reclaim"));
+    await backend.claimUserTab(sessionParams("obu-reclaim", { tabId: tab.id }));
+    const session = await backend.store.getSession("obu-reclaim");
+    assert.equal(session.tabOrigins[String(tab.id)], "agent", "re-claim keeps the agent origin");
+    const report = await backend.finalizeTabs(sessionParams("obu-reclaim", { keep: [] }));
+    assert.deepEqual([...report.closed], [tab.id], "agent tab closed after re-claim");
+    assert.ok(
+      fake.state.removedWindows.includes(session.windowId),
+      "owned window closed after its only tab was finalized"
+    );
+  }
+
+  // === Test 12: untracked initial blank of a claim-created window is ours — closed at finalize ===
+  {
+    const fake = createChromeFake();
+    const userWindow = fake.helpers.addWindow({ focused: true, type: "normal" });
+    const userTab = fake.helpers.addTab({ windowId: userWindow, url: "https://linux.do" });
+    const Backend = await loadBackground(bgSource, fake.chrome);
+    const backend = new Backend();
+    await backend.claimUserTab(sessionParams("obu-claimfirst", { tabId: userTab }));
+    const session = await backend.store.getSession("obu-claimfirst");
+    const winId = session.windowId;
+    const windowTabs = await fake.chrome.tabs.query({ windowId: winId });
+    const blankId = [...windowTabs].map((t) => t.id).find((id) => id !== userTab);
+    assert.ok(typeof blankId === "number", "claim-created window holds an untracked initial blank");
+    const report = await backend.finalizeTabs(sessionParams("obu-claimfirst", { keep: [] }));
+    assert.deepEqual([...report.closed], [blankId], "untracked initial blank is closed as ours");
+    assert.deepEqual([...report.released], [userTab], "claimed user tab is released");
+    assert.ok(
+      !fake.state.removedWindows.includes(winId),
+      "window kept because the released user tab still lives in it"
+    );
+  }
+
   console.log("isolated-window tests passed");
 }
 
