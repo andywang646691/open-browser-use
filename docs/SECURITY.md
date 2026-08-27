@@ -38,9 +38,9 @@ The Chrome route intentionally exposes powerful browser automation primitives to
 ## 隔离窗口后台唤醒 (Background Wake)
 
 隔离窗口的会话 tab 被遮挡时，浏览器 compositor 会节流/挂起其渲染与懒加载管线
-(rAF + IntersectionObserver)，且 `document.visibilityState` 由窗口遮挡驱动、
-CDP 无可见性仿真命令。OBU 对这些 tab 在**首次 debugger attach** 时自动应用
-CDP 层唤醒，并在**主 frame 导航**时自动重放：
+(rAF + IntersectionObserver)，`document.visibilityState` 表现由窗口遮挡驱动。
+OBU 对这些 tab 在**首次 debugger attach** 时自动应用 CDP 层唤醒，并在**主 frame
+导航**时自动重放：
 
 - `Emulation.setFocusEmulationEnabled(true)`：页面的 `document.hasFocus()` 恒为
   true。只在隔离窗口会话 tab 上生效，user 模式（共享用户窗口）不生效；
@@ -48,10 +48,15 @@ CDP 层唤醒，并在**主 frame 导航**时自动重放：
 - `Page.setWebLifecycleState({state:"active"})`：解除 renderer 对 occluded
   窗口的节流，让 IO/rAF 驱动的懒加载恢复。
 
+真机 A/B（2026-08-27 同机同 Chrome）确认：两条命令组合还会把被遮挡页面的读取
+翻为 visible（`visibilityState`→visible、`document.hidden`→false、
+`hasFocus`→true）——可见性门控站点（x.com）懒加载从卡死 4 篇恢复为滚动增长
+（4→11、HomeTimeline 请求命中）；无唤醒对照保持 hidden+卡死。
+
 两条命令 best-effort、逐命令容错（单个失败不阻断 attach），状态随
-`chrome.debugger` detach 自动复位（`document.hasFocus()` 回到真实值、页面回到
-正常节流），不残留。唤醒只改变页面报告/执行的节流状态，不触碰用户数据，
-也不读取或修改 cookie/凭据。
+`chrome.debugger` detach 自动复位（页面回到真实节流/遮挡状态），不残留。
+唤醒只改变页面报告/执行的节流状态，不触碰用户数据，也不读取或修改
+cookie/凭据。
 
 ## MAIN-world injection (`session_inject`)
 

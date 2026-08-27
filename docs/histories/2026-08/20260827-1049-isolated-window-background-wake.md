@@ -66,8 +66,26 @@ JS 读取，compositor 对 occluded 窗口的节流（rAF + IO 挂起）只有 C
 - `docs/SECURITY.md`
 - `docs/exec-plans/active/2026-08-27-isolated-window-background-wake.md`（新增）
 
-### ⏭ Next
+### ⏭ 真机冒烟结果（2026-08-27 完成，用户配合 reload 扩展）
 
-真机冒烟（需用户同意 reload 扩展后）：隔离会话 open_tab(x.com) → 首次 evaluate 读
-`document.hasFocus()` / `document.visibilityState` / rAF 频率 → 滚动看文章数是否增长；
-验证结论决定是否扩展 `session_inject` 或调整默认策略。
+同机同 Chrome、同隔离会话条件，A/B 对照（均首次 attach 后立即读数）：
+
+| 维度 | 无唤醒 baseline | 唤醒开启 |
+|---|---|---|
+| `document.hasFocus()` | false | **true** |
+| `document.visibilityState` | hidden | **visible** |
+| 滚动后文章数 | 4（卡死） | **4→11，持续增长**（pageH 25962→62990） |
+| HomeTimeline 请求 | 从未命中（8s 超时） | **命中** |
+
+用户原始故障精确复现（hidden + 卡 4 篇 + 无 HomeTimeline + scrollY/pageH 冻结），
+唤醒后彻底恢复。**实证结论：focus 仿真 + lifecycle active 组合单独就够**——不仅解除
+渲染器节流，还把被遮挡页面的读取翻为 visible（`visibilityState`→visible、
+`hasFocus`→true），可见性门控站点（x.com）不再需要 `session_inject` 的 DOM 假
+可见性。SKILL/ARCHITECTURE/SECURITY 已按此更正（早期表述"需 DOM 注入配合"是
+基于 8/26 只单独测 lifecycle 的错误推断；组合行为此前未验证）。
+
+未验证边界：最小化窗口（8/26 矩阵显示 lifecycle 单独无法翻转；组合对最小化窗口
+的行为待验证，`session_inject` 保留为该边界的显式回退）。
+
+验证过程无遗留：4 个冒烟 session 全部 finalize（tab 关闭、隔离窗口清空），主仓库
+扩展目录已还原 HEAD（background.js + popup.js 临时钩子已移除）。

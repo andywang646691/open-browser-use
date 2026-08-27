@@ -94,8 +94,16 @@
 - [x] 扩展侧实现 + 单测(`background-wake.test.mjs` 6 用例全绿,
       `node --test apps/chrome-extension/*.test.mjs` 8 文件通过)。
 - [x] 文档同步(SKILL/ARCHITECTURE/SECURITY)。
-- [ ] `make ci` 全量验证。
-- [ ] 真机冒烟(需用户同意 reload 扩展)。
+- [x] `make ci` 全量验证。
+- [x] 真机冒烟（同机同 Chrome，A/B 对照）：
+      - 无唤醒 baseline：`visibilityState=hidden`、`hasFocus=false`、文章卡 4 篇、
+        滚动无 HomeTimeline 请求、scrollY/pageH 冻结（用户原始故障精确复现）。
+      - 唤醒开启：`visibilityState=visible`、`hasFocus=true`、首次滚动 4→11 篇、
+        HomeTimeline 命中、pageH 持续增长（25962→62990）。
+      - **实证结论：focus + lifecycle 组合单独就够**——不止解除节流，还把
+        页面读取翻为 visible，可见性门控站点无需 `session_inject`。
+      - 边界未验证：最小化窗口（8/26 矩阵曾显示 lifecycle 单独无法翻翻转，
+        组合对最小化窗口的行为待验证）。
 - [x] history 记录(随提交)。
 
 ## 决策记录
@@ -110,3 +118,8 @@
 - 2026-08-27:常驻 attach 否定——createTab/claim 不提前 attach,保持现有
   lazy-attach 架构与"不残留调试横幅"不变量;唤醒在首次 CDP 交互的 attach 路径
   上完成。
+- 2026-08-27:**真机 A/B 实证**——唤醒组合单独就足以彻底解决遮挡窗口懒加载
+  (含可见性门控站点):focus 仿真 + lifecycle active 不仅解除渲染器节流,还把
+  `visibilityState` 读取翻为 visible。`session_inject("visibility")` 的 DOM 层
+  不再是遮挡场景必需,保留为最小化窗口等未验证边界的显式回退。SKILL/ARCHITECTURE/
+  SECURITY 已按实证结论更正早期"需 DOM 注入配合"的表述。

@@ -230,8 +230,12 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   CDP 层后台唤醒（`Emulation.setFocusEmulationEnabled(true)` +
   `Page.setWebLifecycleState({state:"active"})`，best-effort、逐命令容错、
   detach 即复位、不抢焦点），并在主 frame `Page.frameNavigated` 时自动重放
-  （导航会重置 lifecycle 为 hidden+节流）；读 `visibilityState`/`document.hidden`
-  的站点仍需 `session_inject("visibility")`（MAIN-world DOM 注入）配合。
+  （导航会重置 lifecycle 为 hidden+节流）。真机 A/B 实证（2026-08-27）：
+  唤醒组合不止解除渲染器节流，还会把被遮挡页面的读取翻为 visible
+  （`visibilityState`→visible、`hasFocus`→true），可见性门控站点（x.com）
+  懒加载恢复（滚动 4→11 篇、HomeTimeline 请求命中）；无唤醒对照则卡在 4 篇。
+  因此 `session_inject("visibility")`（MAIN-world DOM 注入）不再是遮挡窗口的
+  必需项，保留作为唤醒无法覆盖的边界（如最小化窗口，未验证）的显式回退。
   `window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
   --window-mode` flag）决定是否隔离：缺省/`isolated` 即隔离，`user` 退出
   隔离、沿用旧行为（新标签页进用户聚焦窗口）。一旦 session 建立了隔离

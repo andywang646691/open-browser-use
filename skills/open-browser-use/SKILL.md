@@ -77,17 +77,18 @@ guessing. This replaces the need for inline examples.
   so the whole run never touches the user's screen, focus, or tabs — keep it
   that way, and never use `OBU_WINDOW_MODE="user"` for convenience. A session
   window that is occluded or minimized reports
-  `document.visibilityState === "hidden"` (window occlusion drives it; there is
-  **no CDP command that fakes visibility**). But OBU automatically applies a
-  CDP-level background wake to isolated-window session tabs on the first CDP
+  `document.visibilityState === "hidden"` (there is **no single CDP command
+  that fakes visibility**). But OBU automatically applies a CDP-level
+  background wake to isolated-window session tabs on the first CDP
   interaction: focus emulation (`document.hasFocus()` → true) + lifecycle
-  `"active"` (wakes the renderer throttling that would otherwise freeze
-  rAF/IntersectionObserver-driven lazy loading in an occluded window) — no
-  focus is stolen, and the wake resets on detach. For sites whose JS gates on
-  the `visibilityState`/`document.hidden` readouts themselves, add
-  `session_inject("visibility")` (MAIN-world, document-start) so the page sees
-  "visible" — the combination is what restores lazy loading in the isolated
-  window.
+  `"active"`. Empirically the combo does more than un-throttle the renderer —
+  on an occluded window it also flips the page readouts to visible
+  (`visibilityState` → `"visible"`), so visibility-gated sites like x.com
+  lazy-load again (real-device A/B: 4 → 11 posts on the first scroll,
+  HomeTimeline responses fire) with no focus stolen and no DOM injection. The
+  wake resets on detach. `session_inject("visibility")` (MAIN-world,
+  document-start) remains an explicit fallback for cases where the CDP wake
+  cannot apply (edge cases such as minimized windows, unverified).
 - For full data of virtual-scrolled lists, the network-capture pattern
   (`wait_for_event`) remains the robust data-plane choice: it returns every
   response, not just what the DOM renders. If the only working path needs the
