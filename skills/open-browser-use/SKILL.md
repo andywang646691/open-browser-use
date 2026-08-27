@@ -77,13 +77,23 @@ guessing. This replaces the need for inline examples.
   so the whole run never touches the user's screen, focus, or tabs — keep it
   that way, and never use `OBU_WINDOW_MODE="user"` for convenience. A session
   window that is occluded or minimized reports
-  `document.visibilityState === "hidden"`, and sites that lazy-load only when
-  visible will stall on scroll — there is **no CDP visibility emulation**, so
-  prefer the network-capture pattern (`wait_for_event`) over DOM-scroll
-  scraping. If the only working path needs the page truly visible
-  (`Page.bringToFront`, user-window tabs, window moves), it visibly disturbs
-  the user — **ask the user first** and get explicit agreement before doing
-  it.
+  `document.visibilityState === "hidden"` (window occlusion drives it; there is
+  **no CDP command that fakes visibility**). But OBU automatically applies a
+  CDP-level background wake to isolated-window session tabs on the first CDP
+  interaction: focus emulation (`document.hasFocus()` → true) + lifecycle
+  `"active"` (wakes the renderer throttling that would otherwise freeze
+  rAF/IntersectionObserver-driven lazy loading in an occluded window) — no
+  focus is stolen, and the wake resets on detach. For sites whose JS gates on
+  the `visibilityState`/`document.hidden` readouts themselves, add
+  `session_inject("visibility")` (MAIN-world, document-start) so the page sees
+  "visible" — the combination is what restores lazy loading in the isolated
+  window.
+- For full data of virtual-scrolled lists, the network-capture pattern
+  (`wait_for_event`) remains the robust data-plane choice: it returns every
+  response, not just what the DOM renders. If the only working path needs the
+  page truly visible (`Page.bringToFront`, user-window tabs, window moves), it
+  visibly disturbs the user — **ask the user first** and get explicit
+  agreement before doing it.
 - **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
   when the tree lacks the element.
 - **Act**: via `evaluate(js)` — click, focus, set values — and always verify the

@@ -225,6 +225,11 @@ class BrowserBackend {
   constructor() {
     this.store = new SessionStore();
     this.attachedTabs = new Set();
+    // Isolated-session tabs that have the CDP-level background wake applied
+    // (focus emulation + lifecycle "active"). Tracked by tabId because
+    // navigation events only carry a tabId, not a sessionId, and the wake
+    // must be re-applied there when navigation resets the lifecycle state.
+    this.wokenTabIds = new Set();
     this.activeTabsBySession = new Map();
     this.cursorByTabId = new Map();
     this.downloadFilenamesById = new Map();
@@ -239,6 +244,7 @@ class BrowserBackend {
     chrome.debugger.onDetach.addListener((source) => {
       if (typeof source.tabId === "number") {
         this.attachedTabs.delete(source.tabId);
+        this.wokenTabIds.delete(source.tabId);
       }
     });
   }
@@ -665,6 +671,7 @@ class BrowserBackend {
   async attach(params) {
     await this.requireSessionTab(params, "attach");
     const tabId = requireTabId(params, "attach");
+    let justAttached = false;
     if (!this.attachedTabs.has(tabId)) {
       try {
         await chrome.debugger.attach({ tabId }, "1.3");
@@ -674,7 +681,46 @@ class BrowserBackend {
         }
       }
       this.attachedTabs.add(tabId);
+      justAttached = true;
     }
+    // Background wake: session tabs in the isolated (owned) window report
+    // document.visibilityState === "hidden" because window occlusion drives it,
+    // and the renderer additionally throttles lazy-loading pipelines (rAF +
+    // IntersectionObserver) for occluded windows — so scrolling a
+    // visibility-gated site never triggers new requests. There is no CDP
+    // command to fake visibility itself, but two real commands wake the page:
+    // focus emulation (document.hasFocus() -> true) and lifecycle "active"
+    // (un-throttles the renderer). Applied on the fresh attach of a tab that
+    // lives in the session's owned window, re-applied on main-frame
+    // navigation, and reset by detach. Focus is never stolen.
+    if (justAttached) {
+      const session = await this.store.getSession(params.session_id);
+      if (typeof session?.windowId === "number") {
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (tab && tab.windowId === session.windowId) {
+          this.wokenTabIds.add(tabId);
+          return { wake: await this.applyBackgroundWake(tabId) };
+        }
+      }
+    }
+    return { wake: null };
+  }
+
+  // Best-effort CDP background wake for one attached tab. Never throws: each
+  // command result is reported so callers/tests can observe per-command state.
+  async applyBackgroundWake(tabId) {
+    if (!this.attachedTabs.has(tabId)) {
+      return { skipped: "not-attached" };
+    }
+    const focus = await chrome.debugger
+      .sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true })
+      .then(() => ({ ok: true }))
+      .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
+    const lifecycle = await chrome.debugger
+      .sendCommand({ tabId }, "Page.setWebLifecycleState", { state: "active" })
+      .then(() => ({ ok: true }))
+      .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
+    return { focus, lifecycle };
   }
 
   async detach(params) {
@@ -1019,11 +1065,23 @@ class BrowserBackend {
   }
 
   handleCdpEvent(source, method, params) {
-    if (method !== "Page.fileChooserOpened" || typeof source?.tabId !== "number") {
+    if (method === "Page.fileChooserOpened" && typeof source?.tabId === "number") {
+      const waiter = this.fileChooserWaitersByTabId.get(source.tabId);
+      waiter?.resolve(params ?? {});
       return;
     }
-    const waiter = this.fileChooserWaitersByTabId.get(source.tabId);
-    waiter?.resolve(params ?? {});
+    if (
+      method === "Page.frameNavigated" &&
+      typeof source?.tabId === "number" &&
+      this.wokenTabIds.has(source.tabId) &&
+      params?.frame &&
+      typeof params.frame.parentId === "undefined"
+    ) {
+      // Navigating resets the page lifecycle state back to hidden+throttled
+      // for an occluded window; re-apply the wake on the main frame so lazy
+      // loading keeps working across navigations.
+      void this.applyBackgroundWake(source.tabId);
+    }
   }
 
   waitForFileChooserEvent(tabId) {

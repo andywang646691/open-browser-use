@@ -224,7 +224,15 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   （`chrome.windows.create`：`focused:false`、tabs `active:false`、非最小化、
   正常尺寸近全屏居中定位（小视口会让 SPA 虚拟列表只装少量条目）），全程不抢焦点、不打扰用户现有窗口；`session.windowId`
   持久化在 session state 中，窗口被用户关闭或 Chrome 重启后，下次创建 tab
-  时自动重建。`window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
+  时自动重建。窗口被遮挡/最小化时 tab 报 `document.visibilityState==="hidden"`
+  （无 CDP 命令可伪造可见性），且 compositor 会对 occluded 窗口节流、挂起
+  懒加载渲染管线——OBU 对隔离窗口 tab 在首次 debugger attach 时自动应用
+  CDP 层后台唤醒（`Emulation.setFocusEmulationEnabled(true)` +
+  `Page.setWebLifecycleState({state:"active"})`，best-effort、逐命令容错、
+  detach 即复位、不抢焦点），并在主 frame `Page.frameNavigated` 时自动重放
+  （导航会重置 lifecycle 为 hidden+节流）；读 `visibilityState`/`document.hidden`
+  的站点仍需 `session_inject("visibility")`（MAIN-world DOM 注入）配合。
+  `window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
   --window-mode` flag）决定是否隔离：缺省/`isolated` 即隔离，`user` 退出
   隔离、沿用旧行为（新标签页进用户聚焦窗口）。一旦 session 建立了隔离
   窗口就永久隔离。**隔离会话的成员关系以“归属窗口”追踪**（`tabs.query({windowId})` +
