@@ -23,8 +23,8 @@ State lives in env vars — set once, forget (flags still override):
 export OBU_SESSION_ID="obu-<task-slug>"
 export OBU_BROWSER="<browser>"   # after the user chose one
 export OBU_PROFILE="<profile>"   # after the user chose one
-# optional: dedicated background window for the whole run
-# ("isolated" = unfocused background window; default is the user's window)
+# optional: run everything in a dedicated background window
+# ("isolated"); default is the user's window
 export OBU_WINDOW_MODE="isolated"
 ```
 Don't switch browser/profile/session_id mid-task.
@@ -67,29 +67,13 @@ guessing. This replaces the need for inline examples.
   browser calls error with "no current tab" — that means there is genuinely
   nothing to work on.
 - **Tabs**: never guess tab ids — list them first, then act on one. Session
-  tabs open in the **user's focused Chrome window** by default (shared-window
-  flow; a new background tab, not the focused one). `OBU_WINDOW_MODE="isolated"`
-  opts into a dedicated background window (unfocused, non-minimized,
-  near-fullscreen) so the whole run never touches the user's screen. Don't
-  claim the user's existing tabs unless they explicitly asked for that page —
-  `user_tabs()` lists them; session tabs are your own.
-- **Hidden pages and the wake**: whether it's an isolated-window tab or a
-  non-selected background tab in the user's window, the page reads
-  `document.visibilityState === "hidden"` (there is **no single CDP command
-  that fakes visibility**). OBU automatically applies a CDP-level background
-  wake to every session tab on the first CDP interaction: focus emulation
-  (`document.hasFocus()` → true) + lifecycle `"active"`. Empirically the combo
-  does more than un-throttle the renderer — it also flips the hidden tab's
-  readouts to visible (`visibilityState` → `"visible"`), so visibility-gated
-  sites like x.com lazy-load again in both modes (real-device A/B: 4 → 11
-  posts on the first scroll, HomeTimeline responses fire) with no focus
-  stolen and no DOM injection. The wake resets on detach.
+  tabs open in the user's Chrome window by default; `OBU_WINDOW_MODE="isolated"`
+  keeps them in a dedicated background window instead. Don't claim the user's
+  existing tabs unless they explicitly asked for that page — `user_tabs()`
+  lists them; session tabs are your own.
 - For full data of virtual-scrolled lists, the network-capture pattern
   (`wait_for_event`) remains the robust data-plane choice: it returns every
-  response, not just what the DOM renders. If the only working path needs the
-  page truly visible (`Page.bringToFront`, user-window tabs, window moves), it
-  visibly disturbs the user — **ask the user first** and get explicit
-  agreement before doing it.
+  response, not just what the DOM renders.
 - **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
   when the tree lacks the element.
 - **Act**: via `evaluate(js)` — click, focus, set values — and always verify the
