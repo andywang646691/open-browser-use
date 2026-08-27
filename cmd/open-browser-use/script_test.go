@@ -108,6 +108,166 @@ func TestScriptHelperErrorDeferredUntilCall(t *testing.T) {
 	}
 }
 
+// writeTestScript writes content into a temp file and returns its path.
+func writeTestScript(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "task_script.py")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestExecRunsRealPython(t *testing.T) {
+	requirePython3(t)
+	path := writeTestScript(t, "print(1 + 1)\n")
+	var stdout, stderr bytes.Buffer
+	if err := runExecFile(path, socketOptions{}, nil, &stdout, &stderr); err != nil {
+		t.Fatalf("expected success, got %v (stderr: %s)", err, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "2" {
+		t.Fatalf("output = %q, want 2", stdout.String())
+	}
+}
+
+func TestExecExitCodePropagates(t *testing.T) {
+	requirePython3(t)
+	path := writeTestScript(t, "import sys; sys.exit(3)\n")
+	err := runExecFile(path, socketOptions{}, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	requireScriptExit(t, err, 3)
+}
+
+func TestExecTracebackCarriesRealPath(t *testing.T) {
+	requirePython3(t)
+	path := writeTestScript(t, "def broken(:\n")
+	var stderr bytes.Buffer
+	err := runExecFile(path, socketOptions{}, nil, &bytes.Buffer{}, &stderr)
+	requireScriptExit(t, err, 1)
+	out := stderr.String()
+	if !strings.Contains(out, "SyntaxError") {
+		t.Fatalf("stderr should carry the traceback, got: %s", out)
+	}
+	if strings.Contains(out, "<stdin>") {
+		t.Errorf("traceback must not point at <stdin>: %s", out)
+	}
+	if !strings.Contains(out, path) {
+		t.Errorf("traceback should name the script file %s:\n%s", path, out)
+	}
+}
+
+func TestExecRuntimeErrorLineNumbersAreFileLocal(t *testing.T) {
+	requirePython3(t)
+	// Line numbers must match the file itself (no prelude offset), so a raise
+	// on the file's 5th line must appear as "line 5" pointing at this file.
+	path := writeTestScript(t, strings.Join([]string{
+		"# comment line 1",
+		"# comment line 2",
+		"# comment line 3",
+		"# comment line 4",
+		"raise RuntimeError(\"boom\")\n",
+	}, "\n"))
+	var stderr bytes.Buffer
+	err := runExecFile(path, socketOptions{}, nil, &bytes.Buffer{}, &stderr)
+	requireScriptExit(t, err, 1)
+	out := stderr.String()
+	if !strings.Contains(out, "line 5") {
+		t.Errorf("traceback should report the file's own line 5:\n%s", out)
+	}
+	if !strings.Contains(out, path) {
+		t.Errorf("traceback should name the script file %s:\n%s", path, out)
+	}
+}
+
+func TestExecPreludeSurfaceMatchesHeredoc(t *testing.T) {
+	requirePython3(t)
+	// Single-underscore names (_SESSION_ID, _help) and helpers must be visible,
+	// exactly like heredoc mode.
+	path := writeTestScript(t, strings.Join([]string{
+		"print(\"session=\" + _SESSION_ID)",
+		"print(cdp.__doc__.splitlines()[0])",
+		"print(help.__doc__ is not None)",
+	}, "\n"))
+	var stdout bytes.Buffer
+	if err := runExecFile(path, socketOptions{sessionID: "exec-session"}, nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "session=exec-session") {
+		t.Errorf("env session id missing: %s", out)
+	}
+	if !strings.HasPrefix(strings.Split(out, "\n")[1], "Run a raw Chrome DevTools Protocol command") {
+		t.Errorf("cdp docstring not introspectable: %s", out)
+	}
+}
+
+func TestExecHelperErrorDeferredUntilCall(t *testing.T) {
+	requirePython3(t)
+	// Pure python must run without a host; a helper call surfaces the socket
+	// error, mirroring the heredoc contract.
+	path := writeTestScript(t, "print(\"pure\")\n")
+	if err := runExecFile(path, socketOptions{}, nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("pure script should not need a socket: %v", err)
+	}
+	path = writeTestScript(t, "user_tabs()\n")
+	var stderr bytes.Buffer
+	err := runExecFile(path, socketOptions{socketPath: "/nonexistent-obu-test.sock"}, nil, &bytes.Buffer{}, &stderr)
+	requireScriptExit(t, err, 1)
+	if !strings.Contains(stderr.String(), "RuntimeError") {
+		t.Fatalf("stderr should mention the socket error, got: %s", stderr.String())
+	}
+}
+
+func TestApiSheetListsAllHelpers(t *testing.T) {
+	requirePython3(t)
+	cmd := newApiSheetCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("api-sheet failed: %v", err)
+	}
+	sheet := out.String()
+	for _, want := range []string{
+		"cdp(method, **params)",
+		"evaluate(js)",
+		"finalize_tabs(keep=None)",
+		"open_tab(url='', window_mode=None)",
+		"user_tabs()",
+		"memory_put(domain, kind,",
+		"wait_for_event(method,",
+	} {
+		if !strings.Contains(sheet, want) {
+			t.Errorf("api-sheet missing %q:\n%s", want, sheet)
+		}
+	}
+	if !strings.HasPrefix(sheet, "obu helpers \u2014 one-line sheet") {
+		t.Errorf("api-sheet should start with the header, got: %q", sheet[:len("obu helpers")+20])
+	}
+}
+
+func TestExecHelpAcceptsStringForm(t *testing.T) {
+	requirePython3(t)
+	path := writeTestScript(t, "help(\"finalize_tabs\")\n")
+	var stdout bytes.Buffer
+	if err := runExecFile(path, socketOptions{}, nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), "finalize_tabs(") || strings.Contains(stdout.String(), "No Python documentation") {
+		t.Fatalf("exec string-form help failed: %s", stdout.String())
+	}
+}
+
+func TestExecRequiresExistingFile(t *testing.T) {
+	requirePython3(t)
+	err := runExecFile("/nonexistent/script.py", socketOptions{}, nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("missing file should error")
+	}
+	if !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestRunPipedScriptHandlesEmptyInput(t *testing.T) {
 	handled, err := runPipedScript(strings.NewReader(""), socketOptions{}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
@@ -137,6 +297,31 @@ func TestScriptEnvSessionIDReachesPrelude(t *testing.T) {
 	}
 	if strings.TrimSpace(stdout.String()) != "env-script-session" {
 		t.Fatalf("session id = %q, want env value", strings.TrimSpace(stdout.String()))
+	}
+}
+
+func TestScriptHelpAcceptsStringForm(t *testing.T) {
+	requirePython3(t)
+	// REPL habit: help("name") — the prelude's tolerant wrapper resolves
+	// strings against the script globals before falling back to builtin
+	// (which would only understand import paths).
+	output, err := runScript("help(\"finalize_tabs\")\n")
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if !strings.Contains(output, "finalize_tabs(") {
+		t.Fatalf("string-form help should print the docstring, got: %q", output)
+	}
+	if strings.Contains(output, "No Python documentation") {
+		t.Fatalf("known helper name must resolve, got: %q", output)
+	}
+	// Unknown names fall back to the builtin's error, not a crash.
+	output, err = runScript("help(\"no_such_helper_xyz\")\n")
+	if err != nil {
+		t.Fatalf("expected success with builtin fallback, got %v", err)
+	}
+	if !strings.Contains(output, "No Python documentation") {
+		t.Fatalf("unknown name should fall back to builtin message, got: %q", output)
 	}
 }
 

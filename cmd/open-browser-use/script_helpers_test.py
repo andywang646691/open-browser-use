@@ -483,6 +483,29 @@ class PreludeTest(unittest.TestCase):
 
     def test_help_lists_helpers(self):
         self.sh._help()
+
+    def test_help_accepts_helper_name_strings(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.sh.help("cdp")
+        out = buf.getvalue()
+        self.assertIn("cdp(", out)
+        self.assertNotIn("No Python documentation", out)
+        # object form keeps working
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            self.sh.help(self.sh.finalize_tabs)
+        self.assertIn("finalize_tabs(", buf2.getvalue())
+
+    def test_help_unknown_string_falls_back_to_builtin(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.sh.help("no_such_helper_xyz")
+        self.assertIn("No Python documentation found", buf.getvalue())
         self.assertTrue(self.sh.open_tab.__doc__.startswith("Open a new session tab"))
         self.assertIn("wait_for_event", {
             "user_tabs", "tabs", "claim_tab", "open_tab", "navigate",

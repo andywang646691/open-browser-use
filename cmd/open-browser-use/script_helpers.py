@@ -581,25 +581,77 @@ def memory_put(domain, kind, note=None, unlock=None, selector=None, tech=None, r
     return lines_path
 
 
+_HELPER_NAMES = [
+    "user_tabs",
+    "tabs",
+    "claim_tab",
+    "open_tab",
+    "navigate",
+    "history",
+    "name_session",
+    "cdp",
+    "evaluate",
+    "wait_for_event",
+    "memory_put",
+    "close_tab",
+    "finalize_tabs",
+]
+
+
 def _help():
     """Print every helper with its one-line signature (full details via help())."""
-    names = [
-        "user_tabs",
-        "tabs",
-        "claim_tab",
-        "open_tab",
-        "navigate",
-        "history",
-        "name_session",
-        "cdp",
-        "evaluate",
-        "wait_for_event",
-        "memory_put",
-        "close_tab",
-        "finalize_tabs",
-    ]
     print("obu helpers:")
-    for name in names:
+    for name in _HELPER_NAMES:
         fn = globals()[name]
         first_line = (fn.__doc__ or "").strip().splitlines()[0]
         print("  {:<14} {}".format(name, first_line))
+
+
+def _api_sheet():
+    """Print a one-line sheet of every helper: runtime signature + doc line.
+
+    Backs the `obu api-sheet` command so a fresh agent gets the whole helper
+    surface in a single short read, instead of writing scripts just to
+    introspect the API. Signatures come from inspect.signature at runtime, so
+    the sheet never goes stale as the prelude evolves.
+    """
+    import inspect
+    import signal
+    # Let head/less close the pipe without a BrokenPipeError traceback.
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    print("obu helpers \u2014 one-line sheet (script_helpers.py)")
+    print()
+    for name in sorted(_HELPER_NAMES):
+        fn = globals()[name]
+        try:
+            sig = str(inspect.signature(fn))
+        except (TypeError, ValueError):
+            sig = "(...)"
+        if len(sig) > 40:
+            sig = sig[:37] + "..."
+        first_line = (fn.__doc__ or "").strip().splitlines()[0]
+        print("  {:<46} {}".format(name + sig, first_line))
+
+
+import builtins as _builtins
+
+
+def help(target=None):
+    """Print a helper's docstring. Accepts the helper object or its name.
+
+    Python's built-in help() only resolves *strings* as import paths
+    (pydoc.locate), so help("finalize_tabs") would report "No Python
+    documentation found" even though the helper exists right here. This
+    wrapper resolves a string against the script's own globals first, then
+    falls back to the built-in behavior (which still handles objects, and
+    raises the standard "No Python documentation found" for unknown names).
+
+    Example: help(finalize_tabs)  # and help("finalize_tabs") both work
+    """
+    if isinstance(target, str):
+        found = globals().get(target)
+        if found is not None:
+            target = found
+    if target is None:
+        return _builtins.help()
+    return _builtins.help(target)
