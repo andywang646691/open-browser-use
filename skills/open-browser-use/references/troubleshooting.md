@@ -77,7 +77,7 @@ If Chrome blocks local file access for the extension, ask the user to open `chro
 
 ## Heredoc Script Crash: `TypeError: 'NoneType' object is not subscriptable`
 
-A heredoc script that navigates a fresh tab and then calls
+A script that navigates a fresh tab and then calls
 `cdp("Accessibility.getFullAXTree")["nodes"]` could crash with
 `TypeError: 'NoneType' object is not subscriptable` even though the
 `tabs[0]["id"]`-style setup lines succeeded.

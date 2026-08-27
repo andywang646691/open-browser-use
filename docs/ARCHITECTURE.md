@@ -170,6 +170,16 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   prelude，prelude 直接用标准库走 Browser Use JSON-RPC frame 协议。
   `open_tab`/`claim_tab` 设置当前 tab，供后续 `cdp`/`evaluate`
   复用；`finalize_tabs()` 缺省 keep 为空列表。
+- `obu exec <file.py>`：以文件路径执行任务脚本（对应任务工作区
+  脚本）。Go CLI 复用同一 socket 解析，把 go:embed 的 prelude
+  （`script_helpers.py`）与 runner（`script_runner.py`）写入临时目录，
+  spawn `python3 -u <runner> <file>`；runner 把 prelude 作为模块
+  `sys.path` 导入并全量注入全局（含 `_SESSION_ID`/`_help` 等单下划线名，
+  与 heredoc 拼接模式表面一致），再 `compile(source, file, 'exec')` 执行，
+  使 SyntaxError/RuntimeError 的 traceback 携带真实文件路径和文件内行号
+  （heredoc 的 stdin 拼接会得到 `<stdin>` + prelude 偏移行号）；stdout/
+  stderr 透传、python 退出码透传；`OBU_SESSION_ID` flag 显式注入子进程
+  env（heredoc 与 exec 均如此，flag 优先于继承的环境变量）。
 - 会话、browser、profile 等状态提供环境变量默认值：`OBU_SESSION_ID`、
   `OBU_BROWSER`、`OBU_PROFILE`、`OBU_WINDOW_MODE` 在未显式传对应 flag
   时作为默认值兜底，flag 仍然优先。
@@ -180,7 +190,30 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
 - CLI 便捷子命令覆盖当前核心能力：`ping`、`info`、`tabs`、
   `user-tabs`、`history`、`open-tab`、`navigate`、`claim-tab`、
   `finalize-tabs`、`name-session`、`cdp`、`move-mouse`、
-  `wait-file-chooser`、`set-file-chooser-files`、`turn-ended`、`profiles`。
+  `wait-file-chooser`、`set-file-chooser-files`、`turn-ended`、`profiles`、
+  `taskinit`、`api-sheet`、`exec`、`tasksizes`。
+- 任务启动仪式一条龙：`obu taskinit <domain>/<slug>` 探测并选定
+  target（单 target 自动采用；多 target 列出带可复制 rerun 命令的清单并
+  报错，保留"多 target 必问用户、不静默选 active window"硬规则），
+  创建 `tasks/<domain>/<slug>-<YYYYMMDD-HHMMSS>/` 时间戳实例目录（每次
+  taskinit 都是新实例，同名任务不碰撞；输出的目录路径就是工作目录，
+  续跑旧任务直接 exec 其脚本，无需再 taskinit），写入 `.obu.env`
+  （`OBU_SESSION_ID=obu-<实例>`/browser/profile；已存在则保留并沿用其
+  session id——同一任务目录永远对应同一 session），ping 验证 target，
+  并输出 api-sheet。domain 归一化与 site-memory 一致（去 `www.`、小写）；
+  slug 校验拒绝 `/`、`.`/`..`、超长与审计扫描保留名（`__pycache__`/
+  `.DS_Store`），防止破坏二层布局、路径逃逸或与 `tasksizes` 统计盲区
+  碰撞。`obu exec <file>` 只读脚本**同目录** `.obu.env`（不向上查找，
+  任务强相关锚定任务目录），`--env-file` 显式覆盖；优先级
+  flag > `--env-file`/`.obu.env` > 继承环境变量。
+- 任务工作区：每个任务的脚本按 `tasks/<domain>/<task-slug>/` 沉淀到
+  `$OBU_TASK_DIR`（默认 `~/.open-browser-use/tasks/`），与 memory 并行根；
+  domain 归一化规则与 site-memory 一致（去 `www.`、小写），task-slug 与
+  `OBU_SESSION_ID` 的 slug 对齐，脚本用 `obu exec <file>` 执行
+  （文件路径执行、traceback 行号与文件对齐、失败尝试留盘可 diff 可复盘，
+  稳定流程 wrap-up 时升级为 runbook）。`obu tasksizes`
+  按域名分组审计体积（任务数/文件数/总大小、域内 largest、
+  `--older-than <days> --dry-run` 列出 idle 超期候选），本期只观测不删除。
 - Multi-browser / multi-profile 支持：`open-browser-use profiles` 扫描 Chrome
   Stable、Chrome Beta 和 BitBrowser user-data roots，在每个 profile 目录中
   通过 CRX 与 unpacked 两条路径找到已经装好插件的 profile，附带 browser id、

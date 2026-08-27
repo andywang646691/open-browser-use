@@ -2,7 +2,7 @@
 
 Site memory turns each OBU visit's hard-won experience into reusable data.
 It lives as plain files — no memory commands. Read with your own file tools
-(grep/find/read); write through the `memory_put(...)` helper in a heredoc.
+(grep/find/read); write through the `memory_put(...)` helper in a script.
 
 ## Where it lives
 
@@ -17,6 +17,16 @@ It lives as plain files — no memory commands. Read with your own file tools
 
 Set `OBU_MEMORY_DIR` to a repo dir (e.g. `docs/wiki/sites/`) to share the
 store with a team.
+
+## Task workspace (parallel root)
+
+Task scripts are a **parallel** workspace, not memory: every script for a
+task lives at `~/.open-browser-use/tasks/<domain>/<slug>/` (`$OBU_TASK_DIR`
+overrides) and is run with `obu exec <file>` (accurate tracebacks).
+It's audit trail, not knowledge.
+When a flow stabilizes across tasks, promote its verified script to a
+runbook here (`runbooks/<name>.py`), then the task dir can be discarded.
+`obu tasksizes` audits workspace growth (per-domain sizes, idle candidates).
 
 ## Core rule: fixed skill, growing data
 
@@ -45,7 +55,7 @@ Lenient aliases (accepted instead of failing): `subject`/`body` → `note`,
 `how` → `unlock`; unknown kwargs raise a TypeError that lists the valid
 fields so the mistake is self-correcting.
 
-### Write — inside a heredoc
+### Write — inside a script
 
 ```python
 memory_put("x.com", kind="surprise",
@@ -57,7 +67,7 @@ memory_put("x.com", kind="surprise",
 - Python kwargs: no escaping; the helper validates `kind`, normalizes the
   domain, forbids `|`, and appends atomically (never overwrites).
 - Don't remember the vocabulary — introspect: `help(memory_put)` at runtime.
-- Outside a heredoc (no OBU), append the same labeled line with your file
+- Outside a script (no OBU), append the same labeled line with your file
   tools; the reader is tolerant (field order/aliases/missing `ts` are OK).
 - Never write credentials, private links, or anything covered by the OBU
   "don't touch cookies/passwords" rule.
@@ -90,7 +100,7 @@ count is bounded — that's what makes full recall cheap.
   # 来源: 2026-08-25, switched from scrolling to network capture
   ```
 
-  Rerun one-command: `obu < runbooks/x-timeline-scrape.py`, then judge success
+  Rerun one-command: `obu exec runbooks/x-timeline-scrape.py`, then judge success
   against the `验证` line. A failing rerun means the runbook rotted — mark
   stale, fix, or delete. Only store code that actually ran through; don't
   store one-shot scripts (record a row / technique instead).
@@ -116,7 +126,7 @@ count is bounded — that's what makes full recall cheap.
    transferable fix    → techniques/<name>.md  (关键词+触发信号+成因+解法)
    stable repeat task  → runbooks/<name>.py    (verified code + header)
    domain ≥2 hits      → aggregate rows into playbooks/<domain>.md
-3. How? In heredoc: memory_put(...). Elsewhere: append a labeled line.
+3. How? In a script: memory_put(...). Elsewhere: append a labeled line.
    Unsure of format → read this file or the store's README.
 ```
 
