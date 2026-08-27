@@ -23,9 +23,6 @@ State lives in env vars — set once, forget (flags still override):
 export OBU_SESSION_ID="obu-<task-slug>"
 export OBU_BROWSER="<browser>"   # after the user chose one
 export OBU_PROFILE="<profile>"   # after the user chose one
-# optional: run everything in a dedicated background window
-# ("isolated"); default is the user's window
-export OBU_WINDOW_MODE="isolated"
 ```
 Don't switch browser/profile/session_id mid-task.
 
@@ -67,8 +64,7 @@ guessing. This replaces the need for inline examples.
   browser calls error with "no current tab" — that means there is genuinely
   nothing to work on.
 - **Tabs**: never guess tab ids — list them first, then act on one. Session
-  tabs open in the user's Chrome window by default; `OBU_WINDOW_MODE="isolated"`
-  keeps them in a dedicated background window instead. Don't claim the user's
+  tabs open in the user's Chrome window by default — don't claim the user's
   existing tabs unless they explicitly asked for that page — `user_tabs()`
   lists them; session tabs are your own.
 - For full data of virtual-scrolled lists, the network-capture pattern
@@ -82,21 +78,6 @@ guessing. This replaces the need for inline examples.
   observable, poll for it (loop with a bounded retry budget until it holds)
   instead of a blind `time.sleep`. Use a short settle delay only where no
   condition can be observed.
-- **Observe CDP events for data the DOM won't show**: `wait_for_event(method,
-  predicate=...)` blocks until a CDP event arrives (network responses, JS
-  console errors, page events) and returns its params. Enable the domain
-  first, then trigger the action, then wait — e.g. capture a timeline
-  response instead of scraping a virtual-scrolled DOM:
-  ```py
-  cdp("Network.enable")
-  evaluate("location.reload()")
-  # The predicate receives the full event (event["params"]["response"]); the
-  # return value is the inner params dict (index it as params["requestId"]).
-  params = wait_for_event("Network.responseReceived",
-                          predicate=lambda event: "HomeTimeline" in event["params"]["response"]["url"])
-  body = cdp("Network.getResponseBody", requestId=params["requestId"])["body"]
-  ```
-  `help(wait_for_event)` for the event shape and timeout diagnostics.
 - **Coordinates / raw CDP**: only when DOM/JS access isn't enough; `help()` on
   the relevant helpers for the exact steps and their order.
 
