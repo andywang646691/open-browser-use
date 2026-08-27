@@ -448,6 +448,31 @@ class PreludeTest(unittest.TestCase):
         self.assertIn("Log.entryAdded", msg)  # diagnostic lists what was seen
         self.assertIn('Network.enable', msg)  # missing-domain hint for Network.*
 
+    def test_wait_for_event_timeout_lists_response_urls(self):
+        # When Network.responseReceived events flow but none pass the predicate,
+        # the timeout diagnostic must name their URLs — otherwise a too-narrow
+        # predicate (e.g. matching the JS bundle instead of the GraphQL endpoint)
+        # looks exactly like "no events at all".
+        self.sh.user_tabs()
+        self.host.push(self._on_cdp_event(
+            "Network.responseReceived",
+            {"response": {"url": "https://x.com/shared~HomeTimeline.bundle.js", "status": 200}},
+        ))
+        self.host.push(self._on_cdp_event(
+            "Network.responseReceived",
+            {"response": {"url": "https://x.com/i/api/graphql/wp06oo3fR/HomeTimeline?count=20", "status": 200}},
+        ))
+        with self.assertRaises(RuntimeError) as ctx:
+            self.sh.wait_for_event(
+                "Network.responseReceived",
+                predicate=lambda e: "variables=%7B%22cursor" in e["params"]["response"]["url"],
+                timeout=0.3,
+            )
+        msg = str(ctx.exception)
+        self.assertIn("HomeTimeline.bundle.js", msg)
+        self.assertIn("HomeTimeline?count=20", msg)
+        self.assertIn("Network.responseReceived URLs", msg)
+
     def test_wait_for_event_rejects_bad_args(self):
         with self.assertRaises(ValueError):
             self.sh.wait_for_event("", timeout=5)
@@ -473,6 +498,39 @@ class PreludeTest(unittest.TestCase):
             "history", "name_session", "cdp", "evaluate", "wait_for_event",
             "memory_put", "close_tab", "finalize_tabs",
         })
+
+    def test_memory_put_accepts_subject_body_aliases(self):
+        # Agents guess the kwarg names (subject=/body= instead of note=); map
+        # them instead of failing with a bare TypeError.
+        tmp = tempfile.mkdtemp(prefix="obu-mem-test-")
+        old = os.environ.get("OBU_MEMORY_DIR")
+        os.environ["OBU_MEMORY_DIR"] = tmp
+        try:
+            path = self.sh.memory_put("x.com", kind="tip", subject="s", body="b")
+            line = open(path, encoding="utf-8").read().strip()
+            self.assertIn("domain=x.com", line)
+            self.assertIn("note=s b", line)
+            path2 = self.sh.memory_put("x.com", kind="fail", note="n", how="h")
+            line2 = open(path2, encoding="utf-8").read().strip()
+            self.assertIn("kind=fail", line2)
+            self.assertIn("unlock=h", line2)
+        finally:
+            if old is None:
+                os.environ.pop("OBU_MEMORY_DIR", None)
+            else:
+                os.environ["OBU_MEMORY_DIR"] = old
+
+    def test_memory_put_unknown_kwarg_names_valid_fields(self):
+        with self.assertRaises(TypeError) as ctx:
+            self.sh.memory_put("x.com", kind="tip", note="n", subject2="x")
+        msg = str(ctx.exception)
+        self.assertIn("subject2", msg)
+        self.assertIn("note / unlock / selector / tech / runbook", msg)
+
+    def test_memory_put_kind_runbook_hints_at_field(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.sh.memory_put("x.com", kind="runbook", note="n")
+        self.assertIn("runbook is a field", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -41,6 +41,10 @@ dropped) · `ts` · `kind` (`fail` | `surprise` | `tip`) · `note` · `unlock`
 (required for `fail`/`surprise`) · `selector` · `tech` → techniques file ·
 `runbook` → runbook file.
 
+Lenient aliases (accepted instead of failing): `subject`/`body` → `note`,
+`how` → `unlock`; unknown kwargs raise a TypeError that lists the valid
+fields so the mistake is self-correcting.
+
 ### Write — inside a heredoc
 
 ```python

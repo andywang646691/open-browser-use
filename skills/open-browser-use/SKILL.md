@@ -100,9 +100,11 @@ guessing. This replaces the need for inline examples.
   ```py
   cdp("Network.enable")
   evaluate("location.reload()")
-  ev = wait_for_event("Network.responseReceived",
-                      predicate=lambda e: "HomeTimeline" in e["params"]["response"]["url"])
-  body = cdp("Network.getResponseBody", requestId=ev["requestId"])["body"]
+  # The predicate receives the full event (event["params"]["response"]); the
+  # return value is the inner params dict (index it as params["requestId"]).
+  params = wait_for_event("Network.responseReceived",
+                          predicate=lambda event: "HomeTimeline" in event["params"]["response"]["url"])
+  body = cdp("Network.getResponseBody", requestId=params["requestId"])["body"]
   ```
   `help(wait_for_event)` for the event shape and timeout diagnostics.
 - **Coordinates / raw CDP**: only when DOM/JS access isn't enough; `help()` on

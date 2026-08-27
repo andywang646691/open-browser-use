@@ -349,9 +349,9 @@ def wait_for_event(method, predicate=None, timeout=30.0):
 
         cdp("Network.enable")
         evaluate("location.reload()")
-        ev = wait_for_event("Network.responseReceived",
-                            predicate=lambda e: "HomeTimeline" in e["params"]["response"]["url"])
-        body = cdp("Network.getResponseBody", requestId=ev["requestId"])["body"]
+        params = wait_for_event("Network.responseReceived",
+                                predicate=lambda event: "HomeTimeline" in event["params"]["response"]["url"])
+        body = cdp("Network.getResponseBody", requestId=params["requestId"])["body"]
 
     method: CDP event name, e.g. "Network.responseReceived",
     "Runtime.consoleAPICalled", "Page.loadEventFired".
@@ -360,8 +360,10 @@ def wait_for_event(method, predicate=None, timeout=30.0):
     match any event of that method.
 
     Returns the inner params dict of the first matching event. Raises after
-    `timeout` seconds with a diagnostic listing the events that were seen, so a
-    missing-timeout (e.g. forgot to cdp("Network.enable")) is self-explanatory.
+    `timeout` seconds with a diagnostic listing the events that were seen —
+    including, for Network.responseReceived, a sample of the most recent
+    response URLs — so a no-match timeout (e.g. a too-narrow predicate, or
+    forgetting to cdp("Network.enable")) is self-explanatory.
 
     While blocked, this helper reads the host socket itself: do not fire other
     helpers from another thread concurrently.
@@ -374,6 +376,7 @@ def wait_for_event(method, predicate=None, timeout=30.0):
 
     conn = _get_conn()
     seen = {}
+    seen_urls = {}  # method -> most recent response URLs, for timeout diagnostics
 
     def _incoming(frame):
         """Map one raw frame to a CDP event, or None if it is not a match."""
@@ -392,11 +395,16 @@ def wait_for_event(method, predicate=None, timeout=30.0):
 
     def _count(frame):
         params = frame.get("params") or {}
-        name = (
-            params.get("method")
-            if frame.get("method") == "onCDPEvent"
-            else (frame.get("method") or "frame")
-        )
+        if frame.get("method") == "onCDPEvent":
+            name = params.get("method")
+            if name == "Network.responseReceived":
+                url = ((params.get("params") or {}).get("response") or {}).get("url") or ""
+                if url:
+                    urls = seen_urls.setdefault(name, [])
+                    urls.append(url)
+                    del urls[:-5]
+        else:
+            name = frame.get("method") or "frame"
         seen[name] = seen.get(name, 0) + 1
 
     def _drain():
@@ -439,12 +447,19 @@ def wait_for_event(method, predicate=None, timeout=30.0):
         "{} x{}".format(name, count)
         for name, count in sorted(seen.items(), key=lambda kv: -kv[1])[:5]
     ) or "(none)"
+    url_hint = ""
+    if seen_urls:
+        samples = [
+            ("…" if len(url) > 160 else "") + url[-160:]
+            for url in seen_urls["Network.responseReceived"][-3:]
+        ]
+        url_hint = " ; Network.responseReceived URLs: " + " | ".join(samples)
     hint = ""
     if method.startswith("Network.") and not any(k.startswith("Network.") for k in seen):
         hint = ' ; hint: call cdp(\"Network.enable\") before the action that fires the event'
     raise RuntimeError(
         "wait_for_event({!r}) timed out after {:.1f}s: received {} events, none matched "
-        "(methods seen: {}){}".format(method, timeout, sum(seen.values()), top, hint)
+        "(methods seen: {}){}{}".format(method, timeout, sum(seen.values()), top, url_hint, hint)
     )
 
 
@@ -496,7 +511,8 @@ def session_inject(script="visibility"):
     return _request("injectMainScript", {"script": script})
 
 
-def memory_put(domain, kind, note, unlock=None, selector=None, tech=None, runbook=None):
+def memory_put(domain, kind, note=None, unlock=None, selector=None, tech=None, runbook=None,
+               **kwargs):
     """Record one reusable fact about a site to the site memory store.
 
     Appends one labeled line to ~/.open-browser-use/memory/site-memory.lines
@@ -514,17 +530,44 @@ def memory_put(domain, kind, note, unlock=None, selector=None, tech=None, runboo
     Field values must not contain '|'; domains are normalized (www. dropped,
     lowercased). Raises ValueError on invalid input.
 
+    Lenient aliases for the kwarg names agents guess wrong: subject / body ->
+    note, how -> unlock; unknown kwargs raise a TypeError that names the valid
+    fields so the mistake is self-correcting.
+
     Example:
         memory_put("x.com", kind="surprise",
                    note="timeline is virtual-scroll, DOM renders only visible items",
                    unlock="scrape network requests instead of scrolling",
                    tech="virtual-scroll-throttle")
     """
+    alias_map = {"subject": "note", "body": "note", "how": "unlock"}
+    for alias, target in alias_map.items():
+        if alias not in kwargs:
+            continue
+        value = kwargs.pop(alias)
+        if not value:
+            continue
+        if target == "note":
+            note = value if note is None else "{} {}".format(note, value)
+        elif unlock is None:
+            unlock = value
+    if kwargs:
+        bad = ", ".join("'{}'".format(k) for k in sorted(kwargs))
+        raise TypeError(
+            "memory_put() got unexpected keyword argument(s) {}; valid fields: "
+            "note / unlock / selector / tech / runbook (aliases: subject, body -> note; "
+            "how -> unlock)".format(bad)
+        )
     if kind not in ("fail", "surprise", "tip"):
+        if kind == "runbook":
+            raise ValueError(
+                "kind must be 'fail', 'surprise' or 'tip', got 'runbook' — runbook is a "
+                "field, not a kind; pass runbook='<name>.py' with kind='tip'"
+            )
         raise ValueError("kind must be 'fail', 'surprise' or 'tip', got {!r}".format(kind))
     note = str(note or "").strip()
     if not note:
-        raise ValueError("note is required")
+        raise ValueError("note is required (or pass subject=/body= alias)")
     if kind in ("fail", "surprise") and not unlock:
         raise ValueError("unlock is required for kind={!r}".format(kind))
     domain = str(domain or "").strip().lower()
