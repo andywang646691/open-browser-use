@@ -23,9 +23,9 @@ State lives in env vars — set once, forget (flags still override):
 export OBU_SESSION_ID="obu-<task-slug>"
 export OBU_BROWSER="<browser>"   # after the user chose one
 export OBU_PROFILE="<profile>"   # after the user chose one
-# optional: opt out of the default isolated background window
-# ("user" = open tabs in the user's focused window like before)
-export OBU_WINDOW_MODE="user"
+# optional: dedicated background window for the whole run
+# ("isolated" = unfocused background window; default is the user's window)
+export OBU_WINDOW_MODE="isolated"
 ```
 Don't switch browser/profile/session_id mid-task.
 
@@ -67,26 +67,23 @@ guessing. This replaces the need for inline examples.
   browser calls error with "no current tab" — that means there is genuinely
   nothing to work on.
 - **Tabs**: never guess tab ids — list them first, then act on one. Session
-  tabs open in a dedicated background window by default: unfocused,
-  non-minimized, normal-sized (fills the screen), so the whole run never disturbs the user
-  (`OBU_WINDOW_MODE="user"` opts back into the shared-window flow). Don't
+  tabs open in the **user's focused Chrome window** by default (shared-window
+  flow; a new background tab, not the focused one). `OBU_WINDOW_MODE="isolated"`
+  opts into a dedicated background window (unfocused, non-minimized,
+  near-fullscreen) so the whole run never touches the user's screen. Don't
   claim the user's existing tabs unless they explicitly asked for that page —
-  `user_tabs()` already excludes OBU's own window so session tabs can't be
-  mistaken for user tabs.
-- **Don't disturb the user**: the default isolated background window exists
-  so the whole run never touches the user's screen, focus, or tabs — keep it
-  that way, and never use `OBU_WINDOW_MODE="user"` for convenience. A session
-  window that is occluded or minimized reports
+  `user_tabs()` lists them; session tabs are your own.
+- **Hidden pages and the wake**: whether it's an isolated-window tab or a
+  non-selected background tab in the user's window, the page reads
   `document.visibilityState === "hidden"` (there is **no single CDP command
-  that fakes visibility**). But OBU automatically applies a CDP-level
-  background wake to isolated-window session tabs on the first CDP
-  interaction: focus emulation (`document.hasFocus()` → true) + lifecycle
-  `"active"`. Empirically the combo does more than un-throttle the renderer —
-  on an occluded window it also flips the page readouts to visible
-  (`visibilityState` → `"visible"`), so visibility-gated sites like x.com
-  lazy-load again (real-device A/B: 4 → 11 posts on the first scroll,
-  HomeTimeline responses fire) with no focus stolen and no DOM injection. The
-  wake resets on detach.
+  that fakes visibility**). OBU automatically applies a CDP-level background
+  wake to every session tab on the first CDP interaction: focus emulation
+  (`document.hasFocus()` → true) + lifecycle `"active"`. Empirically the combo
+  does more than un-throttle the renderer — it also flips the hidden tab's
+  readouts to visible (`visibilityState` → `"visible"`), so visibility-gated
+  sites like x.com lazy-load again in both modes (real-device A/B: 4 → 11
+  posts on the first scroll, HomeTimeline responses fire) with no focus
+  stolen and no DOM injection. The wake resets on detach.
 - For full data of virtual-scrolled lists, the network-capture pattern
   (`wait_for_event`) remains the robust data-plane choice: it returns every
   response, not just what the DOM renders. If the only working path needs the

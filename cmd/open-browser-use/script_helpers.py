@@ -22,9 +22,10 @@ from collections import deque
 
 _SESSION_ID = os.environ.get("OBU_SESSION_ID", "obu-cli")
 _TURN_ID = "{}-{}".format(_SESSION_ID, time.time_ns())
-# Default window placement for session tabs: "user" opts out into the legacy
-# shared-window behavior; anything else (or unset) means the dedicated
-# isolated window. Injected when the caller did not pass window_mode itself.
+# Default window placement for session tabs: unset/"user" = the user's
+# focused Chrome window (default); "isolated" = a dedicated background window
+# that never steals focus. Injected when the caller did not pass window_mode
+# itself.
 _WINDOW_MODE = os.environ.get("OBU_WINDOW_MODE", "")
 _SOCKET_PATH = os.environ.get("OBU_SCRIPT_SOCKET", "")
 _SOCKET_ERROR = os.environ.get("OBU_SCRIPT_SOCKET_ERROR", "")
@@ -220,8 +221,8 @@ def claim_tab(tab_id):
 def open_tab(url="", window_mode=None):
     """Open a new session tab (optional url) and make it current.
 
-    window_mode: "isolated" (default; dedicated background window that never
-    steals focus) or "user" (legacy: open in the focused user window).
+    window_mode: "user" (default; open in the user's focused Chrome window)
+    or "isolated" (dedicated background window that never steals focus).
     Omit to inherit the OBU_WINDOW_MODE environment variable.
 
     Returns the new tab object {"id": int, "url": str, ...}; the id is the

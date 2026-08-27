@@ -335,14 +335,19 @@ function sessionParams(sessionId = "obu-test", extra = {}) {
 async function run() {
   const bgSource = await readFile(BG_PATH, "utf8");
 
-  // === Test 1: isolated by default — one owned window, reused, user window untouched ===
+  // === Test 1: default is the user window (no owned window); explicit
+  //      window_mode="isolated" creates one owned window, reused, and leaves
+  //      the user's window untouched ===
   {
     const fake = createChromeFake();
     const userWindow = fake.helpers.addWindow({ focused: true, type: "normal" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const first = await backend.createTab(sessionParams());
-    await backend.createTab(sessionParams());
+    const defTab = await backend.createTab(sessionParams("obu-def"));
+    assert.equal(fake.state.createdWindows.length, 0, "default mode creates no window");
+    assert.equal(fake.state.tabs.get(defTab.id).windowId, userWindow, "default tab lands in the user window");
+    const first = await backend.createTab(sessionParams("obu-iso", { window_mode: "isolated" }));
+    await backend.createTab(sessionParams("obu-iso", { window_mode: "isolated" }));
     assert.equal(fake.state.createdWindows.length, 1, "exactly one window created");
     const win = fake.state.createdWindows[0];
     assert.equal(win.focused, false, "created window must not steal focus");
@@ -356,7 +361,7 @@ async function run() {
     assert.equal(win.top, 24, "isolated window is centered vertically");
     assert.equal(first.windowId, win.id, "createTab result carries the owned windowId");
     assert.equal(typeof first.windowId, "number", "createTab returns windowId");
-    const session = await backend.store.getSession("obu-test");
+    const session = await backend.store.getSession("obu-iso");
     assert.equal(session.windowId, win.id, "session records the owned window");
     assert.equal(
       typeof session.chromeGroupId,
@@ -371,10 +376,9 @@ async function run() {
       const tab = fake.state.tabs.get(tabId);
       assert.equal(tab.windowId, win.id, `session tab ${tabId} must be in the owned window`);
     }
-    const sessionTabsInUserWindow = [...fake.state.tabs.values()].some(
-      (t) => t.windowId === userWindow && t.url === "about:blank"
-    );
-    assert.equal(sessionTabsInUserWindow, false, "no session tab landed in the user's window");
+    const isoSessionTabIds = [...fake.state.tabs.keys()].filter((id) => id >= first.id);
+    const leakingTabs = isoSessionTabIds.filter((id) => fake.state.tabs.get(id).windowId === userWindow);
+    assert.equal(leakingTabs.length, 0, "no isolated-session tab leaked into the user's window");
   }
 
   // === Test 2: window_mode="user" opts out into the legacy shared-window path ===
@@ -395,7 +399,9 @@ async function run() {
     const userTab = fake.helpers.addTab({ windowId: 1, url: "https://x.com/home" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const claimed = await backend.claimUserTab(sessionParams("obu-claim", { tabId: userTab }));
+    const claimed = await backend.claimUserTab(
+      sessionParams("obu-claim", { tabId: userTab, window_mode: "isolated" })
+    );
     const session = await backend.store.getSession("obu-claim");
     assert.equal(claimed.id, userTab);
     assert.equal(
@@ -428,7 +434,7 @@ async function run() {
     const userTab = fake.helpers.addTab({ windowId: userWindow, url: "https://example.com" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const created = await backend.createTab(sessionParams());
+    const created = await backend.createTab(sessionParams("obu-test", { window_mode: "isolated" }));
     const tabs = await backend.getUserTabs(sessionParams());
     const ids = [...tabs].map((t) => t.id);
     assert.ok(ids.includes(userTab), "real user tab still listed");
@@ -441,7 +447,7 @@ async function run() {
     fake.helpers.addWindow({ focused: true, type: "normal" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const tab = await backend.createTab(sessionParams());
+    const tab = await backend.createTab(sessionParams("obu-test", { window_mode: "isolated" }));
     const session = await backend.store.getSession("obu-test");
     const winId = session.windowId;
     const report = await backend.finalizeTabs(sessionParams("obu-test", { keep: [] }));
@@ -458,7 +464,9 @@ async function run() {
     const userTab = fake.helpers.addTab({ windowId: userWindow, url: "https://example.com" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    await backend.claimUserTab(sessionParams("obu-test", { tabId: userTab }));
+    await backend.claimUserTab(
+      sessionParams("obu-test", { tabId: userTab, window_mode: "isolated" })
+    );
     const session = await backend.store.getSession("obu-test");
     const winId = session.windowId;
     await backend.finalizeTabs(sessionParams("obu-test", { keep: [] }));
@@ -472,7 +480,7 @@ async function run() {
     const userWindow = fake.helpers.addWindow({ focused: true, type: "normal" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const tab = await backend.createTab(sessionParams());
+    const tab = await backend.createTab(sessionParams("obu-test", { window_mode: "isolated" }));
     const session = await backend.store.getSession("obu-test");
     const winId = session.windowId;
     const report = await backend.finalizeTabs(
@@ -496,7 +504,7 @@ async function run() {
     fake.helpers.addWindow({ focused: true, type: "normal" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const tab = await backend.createTab(sessionParams());
+    const tab = await backend.createTab(sessionParams("obu-test", { window_mode: "isolated" }));
     const session = await backend.store.getSession("obu-test");
     const winId = session.windowId;
     await backend.finalizeTabs(
@@ -513,8 +521,8 @@ async function run() {
     fake.helpers.addWindow({ focused: true, type: "normal" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
+    const a = await backend.createTab(sessionParams("obu-mix", { window_mode: "isolated" }));
     const ua = await backend.createTab(sessionParams("obu-mix", { window_mode: "user" }));
-    const a = await backend.createTab(sessionParams("obu-mix"));
     const report = await backend.finalizeTabs(sessionParams("obu-mix", { keep: [] }));
     assert.deepEqual(
       [...report.closed].sort(),
@@ -530,8 +538,8 @@ async function run() {
     fake.state.ignoreGroupCreateProperties = true;
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const a = await backend.createTab(sessionParams("obu-repair"));
-    const b = await backend.createTab(sessionParams("obu-repair"));
+    const a = await backend.createTab(sessionParams("obu-repair", { window_mode: "isolated" }));
+    const b = await backend.createTab(sessionParams("obu-repair", { window_mode: "isolated" }));
     const session = await backend.store.getSession("obu-repair");
     assert.equal(session.windowId, a.windowId, "owned window recorded");
     assert.equal(a.windowId, b.windowId, "both tabs stay in the same owned window");
@@ -555,7 +563,7 @@ async function run() {
     fake.helpers.addWindow({ focused: true, type: "normal" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    const tab = await backend.createTab(sessionParams("obu-reclaim"));
+    const tab = await backend.createTab(sessionParams("obu-reclaim", { window_mode: "isolated" }));
     await backend.claimUserTab(sessionParams("obu-reclaim", { tabId: tab.id }));
     const session = await backend.store.getSession("obu-reclaim");
     assert.equal(session.tabOrigins[String(tab.id)], "agent", "re-claim keeps the agent origin");
@@ -574,7 +582,9 @@ async function run() {
     const userTab = fake.helpers.addTab({ windowId: userWindow, url: "https://linux.do" });
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
-    await backend.claimUserTab(sessionParams("obu-claimfirst", { tabId: userTab }));
+    await backend.claimUserTab(
+      sessionParams("obu-claimfirst", { tabId: userTab, window_mode: "isolated" })
+    );
     const session = await backend.store.getSession("obu-claimfirst");
     const winId = session.windowId;
     const windowTabs = await fake.chrome.tabs.query({ windowId: winId });

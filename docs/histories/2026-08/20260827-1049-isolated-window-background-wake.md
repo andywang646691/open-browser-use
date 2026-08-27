@@ -127,3 +127,33 @@ page-visible 篡改能力）、减少维护面。最小化窗口边界未验证�
 
 验证过程无遗留：冒烟 session 均已 finalize（tab 关闭、窗口清空），主仓库在每一轮
 验证后还原 HEAD（background.js + popup.js 临时钩子已移除）。
+
+## [2026-08-27 12:2X] | 续：默认窗口模式翻转 + 合并入 main
+
+### 📥 User Query（续）
+
+> 默认使用用户窗口，然后合并到 main。
+
+### 🛠 Changes Overview
+
+**Scope（续）：** `background.js`（`sessionUsesIsolatedWindow` 默认翻转）、
+`main.go`（flag 帮助文本）、`script_helpers.py`（注释/docstring）、
+`isolated-window.test.mjs`（Test 1 默认=user，隔离用例显式化）、
+SKILL.md/ARCHITECTURE.md（默认描述翻转）、exec plan + history
+
+**Key Actions:**
+
+- **[默认翻转]** 缺省/`user` = 用户聚焦窗口（默认，共享窗口模式），`isolated` 改为
+  显式 opt-in（`OBU_WINDOW_MODE=isolated` / `window_mode="isolated"`）。隔离窗口
+  机制完整保留，“窗口已建则永久隔离”不变量不变。
+- **[单测]** Test 1 重写：默认模式不建窗口、tab 落用户窗口；显式 isolated 建
+  专用窗口（尺寸/居中/组锚定断言保留）。隔离场景用例（claim/deliverable/
+  handoff/repair/reclaim/claimfirst）全部显式传 `window_mode:"isolated"`。
+- **[入库]** 分支 `feat/background-wake` 合并回 `main`（fast-forward），worktree
+  拆除。
+
+### 🧠 Design Intent
+
+唤醒在两种模式均已真机实证有效后，用户窗口成为默认：模型更简单（tab 就在用户
+浏览器里、无需理解“后台窗口”概念），且不牺牲懒加载/可见性门控站点的可驱动性。
+隔离窗口作为不打扰用户的可选模式保留（显式 opt-in）。

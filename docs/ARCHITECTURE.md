@@ -238,9 +238,9 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   会话 tab 生效，不再区分隔离/非隔离；原 MAIN-world DOM 注入
   （`session_inject`）已随唤醒实证退役。
   `window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
-  --window-mode` flag）决定是否隔离：缺省/`isolated` 即隔离，`user` 退出
-  隔离、沿用旧行为（新标签页进用户聚焦窗口）。一旦 session 建立了隔离
-  窗口就永久隔离。**隔离会话的成员关系以“归属窗口”追踪**（`tabs.query({windowId})` +
+  --window-mode` flag）决定是否隔离：缺省/`user` 即用户聚焦窗口（默认，共享
+  窗口模式），`isolated` 显式进入专用后台窗口（不抢焦点、不打扰用户）。一旦
+  session 建立了隔离窗口就永久隔离。**隔离会话的成员关系以“归属窗口”追踪**（`tabs.query({windowId})` +
   `tabOrigins`），同时仍会在隔离窗口内建立 tab group 做可视化组织：
   `chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab 拽
   过去（`createProperties.windowId` 在部分 Chrome 构建上被无视），因此建组用

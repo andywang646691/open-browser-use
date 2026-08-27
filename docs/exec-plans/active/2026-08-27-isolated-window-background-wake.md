@@ -131,3 +131,10 @@
   DOM 注入层整体删除（`session_inject` handler、MAIN-world 模板、prelude helper、
   测试、打包清单、SKILL/ARCHITECTURE/SECURITY 引用）。最小化窗口边界未验证,
   已知无回退手段，风险可接受（隔离窗口默认不最小化）。
+- 2026-08-27:**默认窗口模式翻转（用户拍板“默认使用用户窗口”）**——缺省/`user`
+  即用户聚焦窗口（共享窗口模式，默认），`isolated` 改为显式 opt-in
+  （`OBU_WINDOW_MODE=isolated` / `window_mode="isolated"`）。唤醒对两种模式
+  均已实证有效，用户窗口默认简化心智模型（tab 就在用户浏览器里）。隔离窗口机制
+  完整保留，“窗口已建则永久隔离”不变量不变。涉及：扩展 `sessionUsesIsolatedWindow`、
+  prelude 注释/docstring、CLI flag 帮助文本、SKILL/ARCHITECTURE、隔离窗口单测翻转
+  （Test 1 默认=user；隔离用例显式传 `window_mode:"isolated"`）。

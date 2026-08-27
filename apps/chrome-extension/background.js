@@ -302,14 +302,13 @@ class BrowserBackend {
   // Isolated window model: a session that isolates owns exactly one Chrome
   // window. Once session.windowId is set the session stays isolated regardless
   // of later params (single-window invariant: tab groups cannot span windows).
-  // window_mode values: "isolated"/"minimized"/unset = isolated (default),
-  // "user" = legacy shared-window behavior (opt-in, e.g. driving a page the
-  // user has open).
+  // window_mode values: unset/"user" = shared user window (default), "isolated"
+  // = dedicated background window (opt-in via OBU_WINDOW_MODE).
   async sessionUsesIsolatedWindow(sessionState, params) {
     if (typeof sessionState.windowId === "number") {
       return true;
     }
-    return params.window_mode !== "user";
+    return params.window_mode === "isolated";
   }
 
   // Get-or-create the session's isolated window; never steals focus and stays

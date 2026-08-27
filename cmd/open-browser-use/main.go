@@ -1489,7 +1489,7 @@ func newOpenTabCommand() *cobra.Command {
 	}
 	addSocketFlags(cmd, &options)
 	cmd.Flags().StringVar(&url, "url", "", "optional URL to navigate after tab creation")
-	cmd.Flags().StringVar(&windowMode, "window-mode", "", "tab window placement: isolated (default) or user")
+	cmd.Flags().StringVar(&windowMode, "window-mode", "", "tab window placement: user (default) or isolated")
 	return cmd
 }
 
