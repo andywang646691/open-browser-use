@@ -493,24 +493,6 @@ def close_tab(tab_id):
     return _request("closeUserTab", {"tabId": tab_id})
 
 
-def session_inject(script="visibility"):
-    """Register a MAIN-world, document-start content script for the session's
-    tabs — pre-page-script injection that page CSP cannot block and that
-    survives navigations (unlike Page.addScriptToEvaluateOnNewDocument on the
-    chrome.debugger path). scoped to the session's HTTP(S) tab origins,
-    removed by finalize_tabs().
-
-    script: template name; currently "visibility" (page reports visible and
-    IntersectionObserver immediately reports everything as intersecting, so
-    IO/visibility-gated lazy loading works in the occluded session window
-    without stealing focus).
-
-    Requires at least one HTTP(S) session tab to scope the match.
-
-    Example: session_inject("visibility") -> {"id": ..., "origins": [...]}"""
-    return _request("injectMainScript", {"script": script})
-
-
 def memory_put(domain, kind, note=None, unlock=None, selector=None, tech=None, runbook=None,
                **kwargs):
     """Record one reusable fact about a site to the site memory store.
@@ -611,7 +593,6 @@ def _help():
         "cdp",
         "evaluate",
         "wait_for_event",
-        "session_inject",
         "memory_put",
         "close_tab",
         "finalize_tabs",

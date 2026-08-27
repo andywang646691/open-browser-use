@@ -86,9 +86,7 @@ guessing. This replaces the need for inline examples.
   (`visibilityState` → `"visible"`), so visibility-gated sites like x.com
   lazy-load again (real-device A/B: 4 → 11 posts on the first scroll,
   HomeTimeline responses fire) with no focus stolen and no DOM injection. The
-  wake resets on detach. `session_inject("visibility")` (MAIN-world,
-  document-start) remains an explicit fallback for cases where the CDP wake
-  cannot apply (edge cases such as minimized windows, unverified).
+  wake resets on detach.
 - For full data of virtual-scrolled lists, the network-capture pattern
   (`wait_for_event`) remains the robust data-plane choice: it returns every
   response, not just what the DOM renders. If the only working path needs the

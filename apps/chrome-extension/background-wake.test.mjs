@@ -1,6 +1,7 @@
 // Node tests for the CDP-level background wake (focus emulation + lifecycle
-// "active") applied automatically to isolated-window session tabs on fresh
-// attach, re-applied on main-frame navigation, and reset by detach. Run:
+// "active") applied automatically to every session tab on fresh attach — in
+// both isolated-window and user-window (shared) sessions — re-applied on
+// main-frame navigation, and reset by detach. Run:
 //   node apps/chrome-extension/background-wake.test.mjs
 
 import { readFile } from "node:fs/promises";
@@ -398,7 +399,7 @@ async function run() {
     assert.equal(fake.state.sentCommands.length, 2, "re-attach is a no-op for the wake");
   }
 
-  // === Test 3: user-mode (shared window) attach never wakes ===
+  // === Test 3: user-mode (shared window) attach also wakes session tabs ===
   {
     const fake = createChromeFake();
     fake.helpers.addWindow({ focused: true, type: "normal" });
@@ -407,8 +408,8 @@ async function run() {
     const tab = await backend.createTab(sessionParams("obu-wake-user", { window_mode: "user" }));
     await fake.chrome.tabs.update(tab.id, { url: "https://x.com/home" });
     const res = await backend.attach({ ...sessionParams("obu-wake-user"), tabId: tab.id });
-    assert.equal(res.wake, null, "user-mode tab is not woken");
-    assert.equal(fake.state.sentCommands.length, 0, "no CDP wake commands for user-mode tabs");
+    assert.equal(res.wake.focus.ok, true, "user-mode session tab is woken");
+    assert.equal(fake.state.sentCommands.length, 2, "wake CDP commands sent for user-mode tabs");
   }
 
   // === Test 4: main-frame navigation re-applies the wake; sub-frames do not;
@@ -463,8 +464,8 @@ async function run() {
     assert.equal(res.wake.lifecycle.ok, true, "lifecycle still attempted and succeeds");
   }
 
-  // === Test 6: a session tab living outside the owned window is not woken
-  //      (rare mixed case: isolated session + tab that ended up in a user window) ===
+  // === Test 6: a session tab living outside any owned window is still woken
+  //      (claimed/mixed session tabs in the user's shared window) ===
   {
     const fake = createChromeFake();
     fake.helpers.addWindow({ focused: true, type: "normal" });
@@ -473,8 +474,8 @@ async function run() {
     const tab = await backend.createTab(sessionParams("obu-wake6"));
     fake.state.tabs.get(tab.id).windowId = 1; // moved out of the owned window
     const res = await backend.attach({ ...sessionParams("obu-wake6"), tabId: tab.id });
-    assert.equal(res.wake, null, "tab outside the owned window is not woken");
-    assert.equal(fake.state.sentCommands.length, 0, "no wake commands for non-owned-window tab");
+    assert.equal(res.wake.focus.ok, true, "session tab outside owned window is still woken");
+    assert.equal(fake.state.sentCommands.length, 2, "wake commands sent for the stray session tab");
   }
 
   console.log("background-wake tests passed");

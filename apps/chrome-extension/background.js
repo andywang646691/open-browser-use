@@ -225,10 +225,11 @@ class BrowserBackend {
   constructor() {
     this.store = new SessionStore();
     this.attachedTabs = new Set();
-    // Isolated-session tabs that have the CDP-level background wake applied
-    // (focus emulation + lifecycle "active"). Tracked by tabId because
-    // navigation events only carry a tabId, not a sessionId, and the wake
-    // must be re-applied there when navigation resets the lifecycle state.
+    // Session tabs that have the CDP-level background wake applied (focus
+    // emulation + lifecycle "active"), for both isolated-window and user-window
+    // sessions. Tracked by tabId because navigation events only carry a tabId,
+    // not a sessionId, and the wake must be re-applied there when navigation
+    // resets the lifecycle state.
     this.wokenTabIds = new Set();
     this.activeTabsBySession = new Map();
     this.cursorByTabId = new Map();
@@ -445,59 +446,6 @@ class BrowserBackend {
     return { ...toBrowserTab(tab), active: true };
   }
 
-  async injectMainScript(params) {
-    const session = await this.requireSession(params);
-    if (params.script !== "visibility") {
-      throw new Error(
-        `injectMainScript: unknown template ${JSON.stringify(params.script)}; supported: "visibility"`
-      );
-    }
-    const sessionState = await this.store.getSession(session.sessionId);
-    const tabs = await this.getSessionTabs(session.sessionId);
-    const origins = [
-      ...new Set(
-        tabs
-          .map((tab) => {
-            try {
-              const u = new URL(tab.url ?? "");
-              if (u.protocol === "http:" || u.protocol === "https:") {
-                return u.origin + "/*";
-              }
-            } catch {}
-            return null;
-          })
-          .filter(Boolean)
-      )
-    ];
-    if (origins.length === 0) {
-      throw new Error(
-        "injectMainScript: no HTTP(S) session tab to scope the injection; navigate a session tab first"
-      );
-    }
-    // id is session-scoped; re-register (unregister first) makes the call
-    // idempotent when matches change (tab navigated to another origin).
-    const injectId = `obu-main-inject-${session.sessionId}`;
-    await chrome.scripting.unregisterContentScripts({ ids: [injectId] }).catch(() => {});
-    const scripts = sessionState.mainInjectScripts ?? [];
-    if (!scripts.includes(injectId)) {
-      scripts.push(injectId);
-    }
-    sessionState.mainInjectScripts = scripts;
-    await this.store.save();
-    await chrome.scripting.registerContentScripts([
-      {
-        id: injectId,
-        matches: origins,
-        js: ["session-inject-main.js"],
-        runAt: "document_start",
-        world: "MAIN",
-        allFrames: false,
-        persistAcrossSessions: false
-      }
-    ]);
-    return { id: injectId, origins };
-  }
-
   async finalizeTabs(params) {
     const session = await this.requireSession(params);
     if (!Array.isArray(params.keep)) {
@@ -550,14 +498,6 @@ class BrowserBackend {
       } else {
         userTabsToRelease.push(tab.id);
       }
-    }
-    // Tear down MAIN-world injections for this session before closing tabs.
-    if (Array.isArray(sessionState.mainInjectScripts) && sessionState.mainInjectScripts.length) {
-      await chrome.scripting
-        .unregisterContentScripts({ ids: sessionState.mainInjectScripts })
-        .catch(() => {});
-      delete sessionState.mainInjectScripts;
-      await this.store.save();
     }
     // Detach every disposition, including handoff tabs we keep alive: leaving a
     // tab attached keeps Chrome's "started debugging this browser" banner up
@@ -683,25 +623,23 @@ class BrowserBackend {
       this.attachedTabs.add(tabId);
       justAttached = true;
     }
-    // Background wake: session tabs in the isolated (owned) window report
-    // document.visibilityState === "hidden" because window occlusion drives it,
-    // and the renderer additionally throttles lazy-loading pipelines (rAF +
-    // IntersectionObserver) for occluded windows — so scrolling a
-    // visibility-gated site never triggers new requests. There is no CDP
-    // command to fake visibility itself, but two real commands wake the page:
+    // Background wake: session tabs report document.visibilityState ===
+    // "hidden" whenever they are not the selected, unobstructed tab — an
+    // occluded/minimized isolated window, or a non-selected background tab in
+    // the user's shared window — and Chrome throttles lazy-loading pipelines
+    // (rAF + IntersectionObserver) for hidden tabs, so scrolling a
+    // visibility-gated site never triggers new requests. There is no single
+    // CDP command that fakes visibility, but two real commands wake the page:
     // focus emulation (document.hasFocus() -> true) and lifecycle "active"
-    // (un-throttles the renderer). Applied on the fresh attach of a tab that
-    // lives in the session's owned window, re-applied on main-frame
-    // navigation, and reset by detach. Focus is never stolen.
+    // (un-throttles the renderer). Empirically the combo also flips the hidden
+    // tab's readouts to visible (verified on an occluded isolated-window tab:
+    // visibilityState -> "visible", hasFocus -> true, x.com lazy loading
+    // restored 4 -> 11 posts on scroll). Applied on the fresh attach of every
+    // session tab, re-applied on main-frame navigation, and reset by detach.
+    // Focus is never stolen.
     if (justAttached) {
-      const session = await this.store.getSession(params.session_id);
-      if (typeof session?.windowId === "number") {
-        const tab = await chrome.tabs.get(tabId).catch(() => null);
-        if (tab && tab.windowId === session.windowId) {
-          this.wokenTabIds.add(tabId);
-          return { wake: await this.applyBackgroundWake(tabId) };
-        }
-      }
+      this.wokenTabIds.add(tabId);
+      return { wake: await this.applyBackgroundWake(tabId) };
     }
     return { wake: null };
   }

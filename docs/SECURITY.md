@@ -58,25 +58,6 @@ OBU 对这些 tab 在**首次 debugger attach** 时自动应用 CDP 层唤醒，
 唤醒只改变页面报告/执行的节流状态，不触碰用户数据，也不读取或修改
 cookie/凭据。
 
-## MAIN-world injection (`session_inject`)
-
-`session_inject("visibility")` registers a `world: "MAIN"`, `runAt:
-"DOCUMENT_START"` content script on the session's HTTP(S) tab origins via
-`chrome.scripting`. Running code in a page's main JS world before its own
-scripts is a strong capability — treat it as page modification, not as a sandbox:
-
-- Scope is the session's current tab origins only (`matches` derived from
-  `getSessionTabs`); never `<all_urls>`.
-- Injection is session-scoped and removed by `finalizeTabs`
-  (`unregisterContentScripts`, `persistAcrossSessions: false`) — nothing
-  survives after the session ends.
-- The template corpus is extension-owned (currently the single `visibility`
-  template); arbitrary caller-supplied JS is not yet supported.
-- An automation client that can invoke `session_inject` can already run
-  arbitrary CDP on the user's profile; injecting MAIN-world code extends that
-  to page-visible tampering and must follow the same caller-trust model as
-  the rest of this surface.
-
 ## Local Transport
 
 The Go native host bridges Chrome Native Messaging stdio to a local Unix socket.

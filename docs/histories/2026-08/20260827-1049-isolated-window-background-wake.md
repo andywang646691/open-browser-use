@@ -66,7 +66,45 @@ JS 读取，compositor 对 occluded 窗口的节流（rAF + IO 挂起）只有 C
 - `docs/SECURITY.md`
 - `docs/exec-plans/active/2026-08-27-isolated-window-background-wake.md`（新增）
 
-### ⏭ 真机冒烟结果（2026-08-27 完成，用户配合 reload 扩展）
+## [2026-08-27 12:0X] | 续：user 窗口模式验证 + `session_inject` 退役删除
+
+### 📥 User Query（续）
+
+> 回到无隔离窗口模式，在用户窗口开 tab group，测试唤醒是否有效；如果 focus +
+> lifecycle 有效，就删掉 session_inject。
+
+### 🛠 Changes Overview
+
+**Scope（续）：** `apps/chrome-extension/background.js`、`background-wake.test.mjs`、
+`session-inject-main.js`/`main-inject.test.mjs`（删除）、`script_helpers.py(_test)`、
+`scripts/package-chrome-extension.sh`、SKILL/ARCHITECTURE/SECURITY、exec plan + history
+
+**Key Actions:**
+
+- **[推广唤醒范围]** 唤醒触发从"仅隔离窗口（`session.windowId` + 归属窗口校验）"
+  推广为**所有会话 tab**——user 模式（共享用户窗口）的后台 tab 同样 hidden+节流，
+  同样需要唤醒。`attach()` 去掉隔离判断，attach 即唤醒；`wokenTabIds` 语义改为
+  "会话 tab"维度。
+- **[单测翻转]** Test 3（user 模式不唤醒 → 应唤醒）与 Test 6（非归属窗口 tab
+  不唤醒 → 应唤醒）断言翻转，两用例全绿。
+- **[user 模式真机验证]** `OBU_WINDOW_MODE=user` 会话，tab 落在用户 Chrome 窗口
+  （Task - OBU 组），非选中后台 tab：唤醒后 `hasFocus=true`、
+  `visibilityState=visible`、HomeTimeline 命中、文章 6→10→11 持续增长
+  （pageH 40972→65319）。**focus + lifecycle 在两种模式都单独有效。**
+- **[删除 `session_inject`]** 用户拍板：DOM 注入层整体退役——`injectMainScript`
+  handler、`session-inject-main.js` MAIN-world 模板、`main-inject.test.mjs`、
+  prelude `session_inject()` helper + 测试、打包清单条目、SKILL/ARCHITECTURE/SECURITY
+  引用全部清除。`make ci` 全绿。
+
+### 🧠 Design Intent
+
+唤醒实证闭环后（遮挡窗口 + 用户窗口后台 tab 均恢复懒加载），MAIN-world DOM 注入
+失去了存在意义：它唯一的价值是伪造可见性读取，而 CDP 组合已能同时伪造
+`visibilityState`/`hasFocus` 并解除渲染器节流。删掉它减少了攻击面（少一类
+page-visible 篡改能力）、减少维护面。最小化窗口边界未验证、删除后无回退手段，
+风险接受（隔离窗口默认不最小化；user 模式不涉及最小化）。
+
+### ⏭ 隔离窗口真机 A/B（2026-08-27，用户配合 reload 扩展）
 
 同机同 Chrome、同隔离会话条件，A/B 对照（均首次 attach 后立即读数）：
 
@@ -85,7 +123,7 @@ JS 读取，compositor 对 occluded 窗口的节流（rAF + IO 挂起）只有 C
 基于 8/26 只单独测 lifecycle 的错误推断；组合行为此前未验证）。
 
 未验证边界：最小化窗口（8/26 矩阵显示 lifecycle 单独无法翻转；组合对最小化窗口
-的行为待验证，`session_inject` 保留为该边界的显式回退）。
+的行为待验证——该边界随 `session_inject` 删除已无回退手段，见上文风险接受）。
 
-验证过程无遗留：4 个冒烟 session 全部 finalize（tab 关闭、隔离窗口清空），主仓库
-扩展目录已还原 HEAD（background.js + popup.js 临时钩子已移除）。
+验证过程无遗留：冒烟 session 均已 finalize（tab 关闭、窗口清空），主仓库在每一轮
+验证后还原 HEAD（background.js + popup.js 临时钩子已移除）。

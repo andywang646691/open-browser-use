@@ -5,8 +5,8 @@
 隔离窗口里的会话 tab 在 debugger attach/导航时，自动应用 CDP 层唤醒
 （`Emulation.setFocusEmulationEnabled(true)` + `Page.setWebLifecycleState({state:"active"})`），
 让被遮挡窗口的页面的懒加载/渲染管线不再被 compositor 节流挂起——不抢焦点、
-不打扰用户，detach 即复位。DOM 注入层（`session_inject("visibility")`）保持显式，
-本轮不扩展。
+不打扰用户，detach 即复位。体验层面已无需要 DOM 注入（`session_inject`）——
+唤醒实证后整个注入层已退役删除。
 
 ## 范围
 
@@ -19,8 +19,8 @@
   - 扩展:单测新增唤醒行为断言(fake sendCommand 录制 + isolated/user 模式对照)。
   - 文档:SKILL.md、ARCHITECTURE.md、SECURITY.md 同步;history 记录。
 - 不包含:
-  - `session_inject` 扩层(DOM 注入 + CDP 唤醒合并)——用户明确本轮不做,先要
-    真机验证 focus + lifecycle 单独是否足够。
+  - ~~`session_inject`~~ 已删除：真机验证 focus + lifecycle 在隔离与 user 模式
+    都单独有效后，用户拍板移除 DOM 注入层（handler/模板/helper/测试/文档全清)。
   - user 模式(共享用户窗口)tab 的唤醒——用户窗口本来就可见/聚焦,无需也不该动。
   - `Page.setPageVisibilityOverride` 之类不存在的可见性命令(已实证回滚,见 history)。
   - 常驻 attach(createTab/claim 时立刻 attach)——保持现有 lazy-attach 架构,
@@ -68,9 +68,11 @@
 2. 扩展侧实现 + 单测(attach 唤醒 / frameNavigated 重放 / detach 清理 /
    isolated 与 user 模式对照)。
 3. 文档(SKILL/ARCHITECTURE/SECURITY)+ 全量验证(`make ci` 相关子集)。
-4. 真机冒烟(focus+lifecycle 单独对 x.com 等可见性门控站点是否足够)——需用户
-   同意 reload 扩展,验证结果决定是否扩展 session_inject 或调整默认策略。
-5. history 记录。
+4. 真机冒烟(隔离遮挡 +
+    user 窗口后台 tab)——需用户同意 reload 扩展,验证结论决定 session_inject
+    去留:有效则删除。
+5. `session_inject` 删除(handler/模板/helper/测试/打包/文档)。
+6. history 记录。
 
 ## 验证方式
 
@@ -96,14 +98,14 @@
 - [x] 文档同步(SKILL/ARCHITECTURE/SECURITY)。
 - [x] `make ci` 全量验证。
 - [x] 真机冒烟（同机同 Chrome，A/B 对照）：
-      - 无唤醒 baseline：`visibilityState=hidden`、`hasFocus=false`、文章卡 4 篇、
-        滚动无 HomeTimeline 请求、scrollY/pageH 冻结（用户原始故障精确复现）。
-      - 唤醒开启：`visibilityState=visible`、`hasFocus=true`、首次滚动 4→11 篇、
-        HomeTimeline 命中、pageH 持续增长（25962→62990）。
-      - **实证结论：focus + lifecycle 组合单独就够**——不止解除节流，还把
-        页面读取翻为 visible，可见性门控站点无需 `session_inject`。
-      - 边界未验证：最小化窗口（8/26 矩阵曾显示 lifecycle 单独无法翻翻转，
-        组合对最小化窗口的行为待验证）。
+      - 隔离：无唤醒 baseline `hidden` + 卡 4 篇 + 无 HomeTimeline；唤醒后
+        `visible` + hasFocus=true + 4→11 篇 + HomeTimeline 命中。
+      - user 模式（用户窗口后台 tab）：唤醒后 `visible` + hasFocus=true +
+        HomeTimeline 命中 + 6→10→11 篇持续增长。
+      - 实证结论：focus + lifecycle 组合单独就够，隔离/user 两模式均有效，
+        页面读取翻为 visible，无需 `session_inject`。
+      - 边界未验证：最小化窗口（8/26 矩阵显示 lifecycle 单独无法翻翻转）。
+- [x] `session_inject` 删除（handler/模板/helper/测试/打包/SKILL/ARCHITECTURE/SECURITY）。
 - [x] history 记录(随提交)。
 
 ## 决策记录
@@ -123,3 +125,9 @@
   `visibilityState` 读取翻为 visible。`session_inject("visibility")` 的 DOM 层
   不再是遮挡场景必需,保留为最小化窗口等未验证边界的显式回退。SKILL/ARCHITECTURE/
   SECURITY 已按实证结论更正早期"需 DOM 注入配合"的表述。
+- 2026-08-27:**user 模式真机验证 + session_inject 退役**——user 窗口后台 tab
+  （非选中 tab）同样被唤醒翻为 visible、懒加载恢复（6→10→11）。唤醒触发条件从
+  "仅隔离窗口"推广为"所有会话 tab"。用户拍板：focus + lifecycle 两模式均有效，
+  DOM 注入层整体删除（`session_inject` handler、MAIN-world 模板、prelude helper、
+  测试、打包清单、SKILL/ARCHITECTURE/SECURITY 引用）。最小化窗口边界未验证,
+  已知无回退手段，风险可接受（隔离窗口默认不最小化）。
