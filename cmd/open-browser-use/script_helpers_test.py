@@ -10,6 +10,7 @@ frame protocol and asserts the helper call sequences and result shapes.
 
 import importlib.util
 import json
+import math
 import os
 import socket
 import struct
@@ -78,6 +79,12 @@ class FakeHost(threading.Thread):
                     continue
                 if method in self.responses:
                     result = self.responses[method]
+                    # A tuple means "one response per request, in order".
+                    # (Lists are legitimate responses, e.g. getUserTabs.)
+                    if isinstance(result, tuple):
+                        result, rest = (result[0], result[1:]) if result else ({"ok": True}, ())
+                        if rest:
+                            self.responses[method] = rest
                 elif method == "getTabs":
                     result = []
                 else:
@@ -277,8 +284,82 @@ class PreludeTest(unittest.TestCase):
         request = self.last("executeCdp")
         self.assertEqual(
             request["params"]["commandParams"],
-            {"expression": "document.title", "returnByValue": True},
+            {
+                "expression": "document.title",
+                "returnByValue": True,
+                "awaitPromise": True,
+            },
         )
+
+    def test_evaluate_retries_top_level_return_wrapped(self):
+        # First attempt fails with Chrome's illegal-return error; the second
+        # is the same snippet wrapped in (function(){...})(), mirroring
+        # browser-harness js(): both bare expressions and return statements
+        # work.
+        self.host.responses["executeCdp"] = (
+            {
+                "result": {"type": "object"},
+                "exceptionDetails": {
+                    "text": "Illegal return statement",
+                    "lineNumber": 1,
+                    "columnNumber": 8,
+                },
+            },
+            {"result": {"type": "number", "value": 42}},
+        )
+        self.sh.claim_tab(1)
+        self.assertEqual(self.sh.evaluate("const x = 42; return x"), 42)
+        calls = [r for r in self.host.requests if r["method"] == "executeCdp"]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            calls[0]["params"]["commandParams"]["expression"], "const x = 42; return x"
+        )
+        self.assertEqual(
+            calls[1]["params"]["commandParams"]["expression"],
+            "(function(){const x = 42; return x})()",
+        )
+
+    def test_evaluate_nested_return_not_rewrapped(self):
+        # A return inside a function body is legal as-is: one attempt only.
+        self.host.responses["executeCdp"] = {
+            "result": {"type": "number", "value": 6}
+        }
+        self.sh.claim_tab(1)
+        expr = "[1, 2, 3].reduce((a, b) => { return a + b }, 0)"
+        self.assertEqual(self.sh.evaluate(expr), 6)
+        expression = [
+            r for r in self.host.requests if r["method"] == "executeCdp"
+        ][0]["params"]["commandParams"]["expression"]
+        self.assertEqual(expression, expr)
+
+    def test_evaluate_decodes_unserializable_values(self):
+        self.host.responses["executeCdp"] = {
+            "result": {"type": "bigint", "unserializableValue": "9007199254740993n"}
+        }
+        self.sh.claim_tab(1)
+        self.assertEqual(self.sh.evaluate("9007199254740993n"), 9007199254740993)
+        self.host.responses["executeCdp"] = {
+            "result": {"type": "number", "unserializableValue": "-Infinity"}
+        }
+        self.assertEqual(self.sh.evaluate("-Infinity"), -math.inf)
+
+    def test_evaluate_error_reports_description_and_location(self):
+        self.host.responses["executeCdp"] = {
+            "result": {"type": "object"},
+            "exceptionDetails": {
+                "text": "Uncaught",
+                "lineNumber": 1,
+                "columnNumber": 3,
+                "exception": {"description": "TypeError: boom is not a function"},
+            },
+        }
+        self.sh.claim_tab(1)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.sh.evaluate("boom()")
+        message = str(ctx.exception)
+        self.assertIn("evaluate threw", message)
+        self.assertIn("TypeError: boom is not a function", message)
+        self.assertIn("at line 1, column 3", message)
 
     def test_evaluate_raises_on_exception(self):
         self.host.responses["executeCdp"] = {

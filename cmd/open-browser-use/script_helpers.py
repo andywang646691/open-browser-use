@@ -13,6 +13,7 @@ return shape, call help(name) or name.__doc__ inside your script.
 """
 
 import json
+import math
 import os
 import socket
 import struct
@@ -312,12 +313,101 @@ def cdp(method, **params):
     )
 
 
-def evaluate(js):
-    """Run a JavaScript expression in the current tab and return its value.
+def _js_snippet(expression, limit=160):
+    """Collapse a JS expression to one line for error messages."""
+    s = " ".join(expression.split())
+    return s if len(s) <= limit else s[: limit - 3] + "..."
 
-    js: str expression; returnByValue is set automatically. Use for DOM
-    reads and actions (.click(), focus, set value) that coordinates cannot
-    express. Raises on JS exceptions.
+
+def _js_exception_message(result, details):
+    """Human-readable description of a Runtime.evaluate failure.
+
+    Prefers the thrown Error's description (richest), falls back to
+    exceptionDetails.text, then to the remote's className/value.
+    """
+    desc = result.get("description") if isinstance(result, dict) else None
+    exc = details.get("exception") if details else None
+    if not desc and isinstance(exc, dict):
+        desc = exc.get("description")
+        if desc is None and "value" in exc:
+            desc = str(exc["value"])
+        if desc is None:
+            desc = exc.get("className")
+    if not desc and details:
+        desc = details.get("text")
+    return desc or "JavaScript evaluation failed"
+
+
+def _decode_unserializable_js_value(value):
+    """Turn CDP unserializableValue strings into Python values.
+
+    BigInt ("42n"), NaN, Infinities, and -0 cannot ride in the JSON "value"
+    field; CDP reports them as strings here.
+    """
+    if value == "NaN":
+        return math.nan
+    if value == "Infinity":
+        return math.inf
+    if value == "-Infinity":
+        return -math.inf
+    if value == "-0":
+        return -0.0
+    if value.endswith("n"):
+        return int(value[:-1])
+    return value
+
+
+def _runtime_value(response, expression):
+    """Unwrap a Runtime.evaluate CDP response, raising on JS exceptions.
+
+    Mirrors browser-harness js(): decodes unserializableValue and turns
+    exceptionDetails into a RuntimeError carrying the JS description plus
+    line/column when Chrome reports them.
+    """
+    result = response.get("result") or {}
+    details = response.get("exceptionDetails")
+    if details or result.get("subtype") == "error":
+        desc = _js_exception_message(result, details)
+        if (
+            details
+            and details.get("lineNumber") is not None
+            and details.get("columnNumber") is not None
+        ):
+            loc = " at line {}, column {}".format(
+                details["lineNumber"], details["columnNumber"]
+            )
+        else:
+            loc = ""
+        raise RuntimeError(
+            "evaluate threw{}: {}; expression: {!r}".format(loc, desc, _js_snippet(expression))
+        )
+    if "value" in result:
+        return result["value"]
+    if "unserializableValue" in result:
+        return _decode_unserializable_js_value(result["unserializableValue"])
+    return None
+
+
+def _wrap_js_function(expression):
+    return "(function(){{{}}})()".format(expression)
+
+
+def _is_illegal_return_error(exc):
+    return "Illegal return statement" in str(exc)
+
+
+def evaluate(js):
+    """Run JavaScript in the current tab and return its value.
+
+    js: str snippet. returnByValue and awaitPromise are set automatically, so
+    both plain expressions and promises (e.g. "async () => await fetch(...)")
+    resolve to their value. Top-level return is supported: if Chrome rejects
+    the snippet for an illegal return statement, it is retried inside
+    (function(){...})(), so evaluate("const x = 1; return x") works without
+    mis-wrapping functions that contain their own returns. Values that JSON
+    cannot carry (BigInt, NaN, Infinities, -0) are decoded. Use for DOM reads
+    and actions (.click(), focus, set value) that coordinates cannot express.
+    Raises RuntimeError on JS exceptions with the thrown message and location.
 
     Resumes the session's last active tab automatically when this process
     has not claimed one yet; call open_tab()/claim_tab() to pick a specific
@@ -326,18 +416,33 @@ def evaluate(js):
     Example: text = evaluate("document.querySelector('h1').textContent")"""
     _ensure_current_tab()
     _attach(_CURRENT_TAB)
-    response = _request(
-        "executeCdp",
-        {
-            "target": {"tabId": _CURRENT_TAB},
-            "method": "Runtime.evaluate",
-            "commandParams": {"expression": js, "returnByValue": True},
-        },
-    )
-    if response.get("exceptionDetails"):
-        raise RuntimeError("evaluate threw: {!r}".format(response["exceptionDetails"]))
-    remote = response.get("result") or {}
-    return remote.get("value")
+
+    def _run(expression):
+        try:
+            return _request(
+                "executeCdp",
+                {
+                    "target": {"tabId": _CURRENT_TAB},
+                    "method": "Runtime.evaluate",
+                    "commandParams": {
+                        "expression": expression,
+                        "returnByValue": True,
+                        "awaitPromise": True,
+                    },
+                },
+            )
+        except socket.timeout as exc:
+            raise RuntimeError(
+                "evaluate timed out; expression: {!r}".format(_js_snippet(expression))
+            ) from exc
+
+    response = _run(js)
+    try:
+        return _runtime_value(response, js)
+    except RuntimeError as exc:
+        if not _is_illegal_return_error(exc):
+            raise
+        return _runtime_value(_run(_wrap_js_function(js)), _wrap_js_function(js))
 
 
 def wait_for_event(method, predicate=None, timeout=30.0):
