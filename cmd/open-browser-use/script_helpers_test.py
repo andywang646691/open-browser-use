@@ -332,6 +332,36 @@ class PreludeTest(unittest.TestCase):
         ][0]["params"]["commandParams"]["expression"]
         self.assertEqual(expression, expr)
 
+    def test_evaluate_bare_arrow_function_returns_none_unexecuted(self):
+        # A bare "() => {...}" is a valid expression whose value is a function
+        # object. returnByValue cannot serialize functions, so CDP returns a
+        # result with no value and no exception: the function never runs and
+        # evaluate() silently yields None. This is the #1 LLM footgun — there
+        # is no auto-invocation; call the function inside the snippet instead.
+        self.host.responses["executeCdp"] = {
+            "result": {
+                "type": "function",
+                "className": "Function",
+                "description": "() => ({a: 1})",
+            }
+        }
+        self.sh.claim_tab(1)
+        self.assertIsNone(self.sh.evaluate("() => ({a: 1})"))
+        calls = [r for r in self.host.requests if r["method"] == "executeCdp"]
+        self.assertEqual(len(calls), 1)  # no illegal-return retry wrap kicked in
+        self.assertEqual(
+            calls[0]["params"]["commandParams"]["expression"], "() => ({a: 1})"
+        )
+
+    def test_evaluate_iife_arrow_function_executes(self):
+        # The same body wrapped in an IIFE runs and returns its value; the
+        # async IIFE form resolves through awaitPromise as well.
+        self.host.responses["executeCdp"] = {"result": {"type": "object", "value": {"a": 1}}}
+        self.sh.claim_tab(1)
+        self.assertEqual(self.sh.evaluate("(() => ({a: 1}))()"), {"a": 1})
+        self.host.responses["executeCdp"] = {"result": {"type": "number", "value": 42}}
+        self.assertEqual(self.sh.evaluate("(async () => 42)()"), 42)
+
     def test_evaluate_decodes_unserializable_values(self):
         self.host.responses["executeCdp"] = {
             "result": {"type": "bigint", "unserializableValue": "9007199254740993n"}

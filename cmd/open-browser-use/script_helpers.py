@@ -400,9 +400,14 @@ def evaluate(js):
     """Run JavaScript in the current tab and return its value.
 
     js: str snippet. returnByValue and awaitPromise are set automatically, so
-    both plain expressions and promises (e.g. "async () => await fetch(...)")
-    resolve to their value. Top-level return is supported: if Chrome rejects
-    the snippet for an illegal return statement, it is retried inside
+    plain expressions and promises resolve to their value. The snippet is
+    evaluated as-is — there is NO auto-invocation: a bare function value such
+    as "() => ({a: 1})" (or "async () => ...") is not JSON-serializable and
+    silently returns None without ever running. To run a function body, call
+    it inside the snippet: "(() => {...})()", or "(async () => await
+    fetch(...))()" for a promise (awaited automatically). Top-level return is
+    supported: if Chrome rejects the snippet for an illegal return statement,
+    it is retried inside
     (function(){...})(), so evaluate("const x = 1; return x") works without
     mis-wrapping functions that contain their own returns. Values that JSON
     cannot carry (BigInt, NaN, Infinities, -0) are decoded. Use for DOM reads
