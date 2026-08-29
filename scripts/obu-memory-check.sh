@@ -32,7 +32,7 @@ fi
 
 # 2) 临时 ref (@N / ref=) 不应留在任何存储文件里（易腐烂）
 refs="$(grep -rEn '(@[0-9]+|\bref=[0-9]+)' "$root/site-memory.lines" \
-  "$root/playbooks" "$root/techniques" "$root/runbooks" 2>/dev/null || true)"
+  "$root/techniques" "$root/runbooks" 2>/dev/null || true)"
 if [[ -n "$refs" ]]; then
   warn "发现临时 ref（易腐烂）:"
   printf '%s\n' "$refs"
@@ -40,7 +40,7 @@ fi
 
 # 3) 明显的密钥/私人链接
 secrets="$(grep -rEni '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|password\s*=|secret\s*=|api[_-]?key\s*=|token\s*=)' \
-  "$root/site-memory.lines" "$root/playbooks" "$root/techniques" "$root/runbooks" 2>/dev/null || true)"
+  "$root/site-memory.lines" "$root/techniques" "$root/runbooks" 2>/dev/null || true)"
 if [[ -n "$secrets" ]]; then
   warn "可能泄露敏感信息:"
   printf '%s\n' "$secrets"

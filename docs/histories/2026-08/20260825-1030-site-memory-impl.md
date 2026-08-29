@@ -20,7 +20,7 @@
 **Key Actions:**
 
 - 新增 `docs/design-docs/site-memory.md`：完整设计（skill 面锁 1、经验只长在
-  数据层；原子行→technique→playbook→runbook 四层；两个机械化检索触发器；
+  数据层；原子行→technique→runbook 三层；两个机械化检索触发器；
   防爆炸硬规则）。
 - 新增 `skills/open-browser-use/references/memory.md`：格式、路径、grep 写法、
   决策树、逐类型示例、`memory_put` 用法——给 LLM 的"开卷考"参考。

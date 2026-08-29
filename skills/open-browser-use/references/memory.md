@@ -2,21 +2,24 @@
 
 Site memory turns each OBU visit's hard-won experience into reusable data.
 It lives as plain files — no memory commands. Read with your own file tools
-(grep/find/read); write through the `memory_put(...)` helper in a script.
+(grep/find/read); write the atomic site row through `memory_put(...)` in a script.
+All paths below are relative to the memory root
+`~/.open-browser-use/memory/` (override with `$OBU_MEMORY_DIR`).
 
 ## Where it lives
 
 ```
 ~/.open-browser-use/memory/          # override root with $OBU_MEMORY_DIR
 ├── README.md                        # this rule, self-described at the store
-├── site-memory.lines                # tier 1: atomic rows (append-only)
+├── site-memory.lines                # atomic rows (append-only, source of truth)
 ├── techniques/<name>.md             # cross-domain, reusable patterns
-├── playbooks/<domain>.md            # tier 2: aggregated view (manual)
-└── runbooks/<name>.py               # tier 3: verified code, one-command rerun
+└── runbooks/<name>.py               # verified code, one-command rerun
 ```
 
 Set `OBU_MEMORY_DIR` to a repo dir (e.g. `docs/wiki/sites/`) to share the
-store with a team.
+store with a team. The effective files are
+`$OBU_MEMORY_DIR/site-memory.lines`, `$OBU_MEMORY_DIR/techniques/`, and
+`$OBU_MEMORY_DIR/runbooks/`.
 
 ## Task workspace (parallel root)
 
@@ -30,9 +33,9 @@ runbook here (`runbooks/<name>.py`), then the task dir can be discarded.
 
 ## Core rule: fixed skill, growing data
 
-Skill count stays 1. Experience grows only as data, keyed by domain (atomic
-rows/playbooks) or by named pattern (techniques) or by stable task (runbooks).
-Never create a per-site skill, package, or new directory type. Write **only
+Skill count stays 1. Experience grows only as data: site facts in atomic rows,
+transferable patterns in techniques, and stable code in runbooks. Never create
+a per-site skill, package, or new directory type. Write **only
 "expensive" knowledge**: traps (`fail`), unexpected structure (`surprise`),
 rare hard-won positive patterns (`tip`). A "map, not a diary": capture the
 shape of the site, not your task narration.
@@ -81,15 +84,14 @@ as `techniques/<name>.md`: a named pattern with `关键词` (synonyms), 触发�
 
 One file per pattern. Before creating: compare against existing titles and
 `关键词` once; if a same-name pattern exists, append only its origin. Pattern
-count is bounded — that's what makes full recall cheap.
+count is bounded — that's what makes full recall cheap. The technique file is
+separate from the site row; `tech=name` only links to it and does not create or
+update it.
 
-## Tier 3 — playbooks (aggregated) & runbooks (code)
+## Tier 3 — runbooks (verified code)
 
-- **Playbook**: once the same domain has ≥2 rows, the agent may aggregate them
-  into `playbooks/<domain>.md` (entry/nav/selectors/traps/verify). Rows stay;
-  the playbook is a view. Threshold keeps the doc set small.
-- **Runbook**: code that took many lines to get right, saved because it
-  re-runs. Store the verified script as `runbooks/<name>.py` with a header:
+**Runbook**: code that took many lines to get right, saved because it
+re-runs. Store the verified script as `runbooks/<name>.py` with a header:
 
   ```python
   # runbook: x-timeline-scrape
@@ -107,34 +109,54 @@ count is bounded — that's what makes full recall cheap.
 
 ## Read — two triggers, native tools
 
-1. **Before a domain new to this session**: `grep "domain=<domain>|" site-memory.lines`
-   → its rows; read `playbooks/<domain>.md`, `runbooks/` hits, and any `tech=`
-   linked techniques.
+1. **Before the first browser action for a domain in the current OBU task**:
+   `grep "domain=<domain>|" <memory-root>/site-memory.lines` → its rows; read
+   any linked `tech=` technique files and `runbook=` scripts.
 2. **On repeated failure** (≥2 tries, or a silent failure: page normal but data
-   missing / scrolling or events not firing): unconditionally read the whole
-   techniques index first (title + 关键词 + 触发信号 per file), then do #1.
+   missing / scrolling or events not firing): enumerate every
+   `<memory-root>/techniques/*.md` and read its title + 关键词 + 触发信号
+   before trying again, then do #1.
    Don't guess keywords — the bounded index is small enough to read fully.
+
+## Mandatory memory checkpoint before the final response
+
+Do not treat a prose explanation of difficulties as memory persistence. Before
+writing the final response:
+
+1. Review the task scripts and result for failed attempts, surprising structure,
+   hard-won fixes, transferable techniques, or verified repeatable flows.
+2. If none exists, write nothing. Otherwise persist each site-specific fact with
+   `memory_put(...)`, and create/update the linked technique or runbook file.
+3. Verify the resulting row/file with native file tools. Only persisted
+   rows/files count as experience deposition.
+
+Call `finalize_tabs()` exactly once as the last browser action. The checkpoint
+may write/read memory files after finalization, but must not call browser helpers
+again.
 
 ## Decision tree at wrap-up
 
 ```text
-1. Any "expensive" knowledge? (trap / surprise / unlock / transferable fix / working code)
+1. Any "expensive" knowledge?
+   (trap / surprise / unlock / transferable fix / verified working code)
    no  → don't write (routine success isn't worth a row)
    yes → next
-2. Which tier?
-   site-specific fact  → atomic row (site-memory.lines)
-   transferable fix    → techniques/<name>.md  (关键词+触发信号+成因+解法)
-   stable repeat task  → runbooks/<name>.py    (verified code + header)
-   domain ≥2 hits      → aggregate rows into playbooks/<domain>.md
-3. How? In a script: memory_put(...). Elsewhere: append a labeled line.
-   Unsure of format → read this file or the store's README.
+2. Which artifact?
+   site-specific fact  → one atomic row in site-memory.lines
+   transferable fix    → create/update techniques/<name>.md
+   stable repeat flow  → create/update runbooks/<name>.py
+3. Link artifacts with `tech=` or `runbook=` on the site row when applicable.
+4. In an OBU script use `memory_put(...)`; elsewhere append a labeled line.
+   `memory_put()` only writes site-memory.lines; use file tools for technique
+   and runbook files. Unsure of format → read this file or the memory README.
 ```
 
 ## Anti-explosion & hygiene (mechanical)
 
-- One domain = one key; never a per-site skill or new directory type.
-- `site-memory.lines` is the only write entry; playbook/technique only via the
-  templates above, with a ≥2 threshold / dedup check.
+- One domain = one key; never a per-site skill, package, or new directory type.
+- `site-memory.lines` is the only atomic write entry; technique and runbook
+  files are created only when their promotion criteria are met, after checking
+  for duplicates.
 - Stale: >90 days with no new rows/reads → archive. Runbook that fails rerun
   → mark stale.
 - Optional check: `scripts/obu-memory-check.sh` (line format, `kind` validity,

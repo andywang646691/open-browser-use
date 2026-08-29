@@ -43,10 +43,9 @@ Agent
   ▼
 ~/.open-browser-use/memory/          ← 默认存储；OBU_MEMORY_DIR 可覆盖
   README.md                          规则自描述（没加载 skill 的 agent 也会学会怎么写）
-  site-memory.lines                  一级：原子经验行（唯一的写入入口）
+  site-memory.lines                  原子经验行（唯一的事实与写入入口）
   techniques/<name>.md              跨域技术经验（虚拟滚动、后台节流、网络兜底…）
-  playbooks/<domain>.md              二级：热门域升级文档（手动聚合生成）
-  runbooks/<name>.py                 三级：跑通的代码，一键复跑（obu < 文件）
+  runbooks/<name>.py                 跑通的代码，一键复跑（obu exec < 文件）
 ```
 
 复用是**按 domain 按需读取**：上下文成本为 O(命中的 domain)，与历史总量无关。
@@ -81,34 +80,7 @@ domain=github.com|ts=2026-08-24T10:10:00Z|kind=tip|note=导出入口在右上菜
 LLM 不用手写管道行。解析器**宽容**：字段顺序无关、接受常见别名
 （`domain`/`site`、`kind`/`type`）、未知字段忽略、`ts` 可缺省。
 
-### 二级：`playbooks/<domain>.md`（手动聚合，不是每次写）
-
-同一 domain 命中 ≥2 次后，由 Agent 按模板把 `site-memory.lines` 里该域的
-行聚合为 playbook（原子行保留，聚合只是视图）：
-
-```markdown
-# github.com
-
-hits: 5 · updated: 2026-08-24
-
-## 入口 / 登录
-右上头像 → Settings
-
-## 导航
-Settings → Billing（导出入口）
-
-## 已验证选择器
-- `a[href="/billing"]` link
-
-## 坑
-- SSO 第二次点击被重定向回首页 → 等 3s 再点
-- 登录弹窗是 iframe，AX 树拿不到 → 先切 frame
-
-## 验证方式
-URL == /billing 且出现表格
-```
-
-### 三级：`runbooks/<name>.py`（跑通的代码，一键复跑）
+### Runbook：`runbooks/<name>.py`（跑通的代码，一键复跑）
 
 任务里写了很多代码才成功的流程，沉淀为**代码本身**——脚本跑通过就是
 验证过的经验。头部 header 模板：
@@ -124,8 +96,8 @@ URL == /billing 且出现表格
 posts = ...  # 跑通的完整脚本
 ```
 
-- **一键执行**：`obu < runbooks/<name>.py`（复用现有 heredoc 模式，
-  不新增执行器）。
+- **一键执行**：`obu exec runbooks/<name>.py`（复用现有文件执行器，
+  不新增记忆命令）。
 - **跑通才入库**：保存前脚本必须真实通过一次。
 - **验证即 stale 自检**：重跑后对照 header「验证」行判成败，失败 = 腐烂，
   标记 stale 后修复或删除——过期不用猜，复跑时自己暴露。
@@ -195,7 +167,7 @@ memory_put("x.com", kind="surprise",
 - 非 OBU heredoc 环境（直接用文件工具）按 §4.1 的行格式手动 append 同样合法
   ——格式就是为手写安全的；解析器宽容（§4.1），写偏了也能被读懂。
 
-技术文件（techniques/）与 playbook 的创建/更新仍是 Agent 用文件工具手写，
+技术文件（techniques/）与 runbook 的创建/更新仍是 Agent 用文件工具手写，
 不在 helper 范围内。
 
 ### 5.3 明确不做：机制级自动捕获
@@ -219,7 +191,7 @@ MV3 extension、加重放验证与失效淘汰机制，成本显著高于收益�
 1. 脚本**真实跑通**后才算 runbook（保存前必须通过一次）。
 2. 用文件工具把脚本存为 `runbooks/<name>.py`，头部附模板
    （用途/前置/验证/参数/来源，见 §4.3）。
-3. 一键执行：`obu < runbooks/<name>.py`。
+3. 一键执行：`obu exec runbooks/<name>.py`。
 4. 参数化用环境变量，禁止复制粘贴改脚本。
 5. 保存前查重 `runbooks/`；**一次性任务脚本**（完成后不再复用）不入库，
    只留站点行/技术。
@@ -234,10 +206,10 @@ endpoint 漂移风险高的，以 technique 为主，runbook 只在多次验证�
 skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep/find/read
 完成（具体命令写法沉淀在 `references/memory.md`）：
 
-1. **按域预取**：访问一个尚未在本次会话建立经验的 domain 前：
+1. **按域预取**：访问一个尚未在本次 OBU 任务建立经验的 domain 前：
    - `grep "domain=<domain>|" site-memory.lines` → 该域原子行；
-   - 有 `playbooks/<domain>.md` / `runbooks/` 命中一并读（含 `runbook=` 链接的脚本）；
-   - `@tech` 链接的技术文件也读出（反向绑定，双保险）。
+   - 有 `runbook=` 链接的脚本一并读；
+   - `tech=` 链接的技术文件也读出。
 2. **失败信号（机械化触发，不依赖猜词）**：同一目标尝试 ≥2 次仍失败、
    或出现「静默失败」（页面正常但数据缺失、滚动/事件不触发）时，
    **无条件**先全量读技术层索引（`find techniques/ -name "*.md"` 后
@@ -245,18 +217,17 @@ skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep
    LLM 不需要猜词——索引全量可见，靠读触发信号自匹配。
    典型翻盘点：滚动抓不到 → 改抓网络请求。
 3. **复用 runbook**：命中时一键复跑并对照 header 的「验证」判成败：
-   `obu < runbooks/<name>.py`；验证失败即标记 stale。
+   `obu exec runbooks/<name>.py`；验证失败即标记 stale。
 
 ## 7. 防爆炸治理（硬规则，全部可机检）
 
-1. 一个 domain = 一个 key；**永不**新增站点级 skill / 站点级目录类型。
-2. 一级是唯一写入入口；playbook/technique 只能按模板聚合或提炼，
-   **禁止**随手开新 md（最重要的防膨胀闸门）。
-3. 升级有阈值：playbook ≥2 次同域命中才聚合；技术文件新建前必须查重，
-   已有同名模式只追加来源站点。
-4. stale 清理：>90 天未命中（无新行、无读取）的 playbook/技术文件
-   标记 stale，Agent 定期归档删除 → 总量有界。判定 = 文件 mtime +
-   最近读取记录，纯文件操作。
+1. 一个 domain = 一个 key；**永不**新增站点级 skill、站点摘要文件或站点级目录类型。
+2. `site-memory.lines` 是唯一的原子事实与写入入口；技术文件和 runbook
+   只能在满足提炼条件、完成查重后创建或更新，**禁止**随手开新 md。
+3. 技术文件新建前必须查重，已有同名模式只追加来源站点；runbook 必须真实跑通
+   后才能入库，一次性脚本不得升级。
+4. stale 清理：>90 天未命中的技术文件标记 stale，Agent 定期归档删除；runbook
+   复跑失败则标记 stale、修复或删除。
 5. skill 数量永久锁定为 1；对已有 domain 只追加，不做断言式覆盖。
 6. 技术层是唯一允许的「跨域」目录；任何新目录类型一律视为违规。
 7. 技术索引必须有界：全量索引输出预算 ≤50 行。可选的独立脚本
@@ -275,32 +246,39 @@ skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep
 - 一级文件：`site-memory.lines`，行格式见 §4.1；字段内禁用 `|`。
 - 读约定：§6 的三条路径 + memory.md 里的具体 grep 命令。
 - 写约定：OBU heredoc 内用 `memory_put(...)`；其他环境手动 append 同格式。
-- runbook：`runbooks/<name>.py` 是完整 heredoc 脚本，一键执行 `obu < 文件`
-  （复用现有 heredoc 模式，不新增执行器）；简单线性流程仍可用 `obu run`，
-  但不作为记忆制品。
+- runbook：`runbooks/<name>.py` 是完整任务脚本，一键执行
+  `obu exec runbooks/<name>.py`（复用现有文件执行器，不新增记忆命令）；简单
+  线性流程仍可用 `obu run`，但不作为记忆制品。
 - **不新增任何 `obu memory *` 命令**：读是 agent 原生能力，命令层是
   对"读文件 + 拼渲染逻辑"的重复抽象。
 
 ## 9. 知识投递链：LLM 怎么学会记录（Skill 集成）
 
 设计文档的格式规则是给**人/开发者**看的；真正让 LLM 知道怎么记录的是
-一条三层投递链，全部不改 skill 结构：
+一条三层投递链，第一层负责线性执行，后两层负责渐进披露：
 
 ### 9.1 三层投递
 
-1. **SKILL.md 短入口**（每次 OBU 任务都加载，~10 行）：只写触发条件+
-   行为约定，不背格式细节——
-   - 收尾时评估经验；要写时先读 memory 根 `README.md` 或
-     `references/memory.md`。
-   - 存取路径、grep 写法、`memory_put` 的用法都在文档里，不写进 skill。
-2. **`references/memory.md`**（写前现读，开卷考）：完整格式、决策树、
-   每类制品一个完整示例（原子行 / technique / playbook / runbook）。
-   只在即将写经验时读，不占日常上下文。
+1. **SKILL.md 主流程**（每次 OBU 任务都加载）：提供初始化、读取上下文、执行、
+   持久化、清理和报告的顺序；每个阶段都有可检查的完成标准，不背格式细节。
+2. **`references/memory.md`**（checkpoint 时现读，开卷考）：完整格式、checkpoint、
+   决策树、每类制品一个完整示例（原子行 / technique / runbook）。
+   只在 memory 分支触发时加载，不占日常上下文。
 3. **memory 根 `README.md`**（自描述兜底）：没加载 skill、或换了个
    没装 skill 的环境的 agent，一旦碰 memory 目录就会读到它——规则
    跟着数据走，不依赖入口点。
 
-### 9.2 收尾时的决策树（写在 memory.md / README 里）
+### 9.2 收尾时的强制 checkpoint（写在 memory.md / README 里）
+
+最终回复前不能只用 prose 汇报困难，必须完成一次 memory checkpoint：
+
+1. 检查任务脚本和结果，找出失败尝试、意外结构、硬解法、可迁移技术或已验证流程。
+2. 没有贵的知识则明确判定“不写”；有则用 `memory_put(...)` 持久化每条站点事实，并
+   用文件工具创建或更新关联的 technique/runbook。
+3. 用原生文件工具重新读取每个写入结果，确认 row/file 确实存在且可读；只有落盘才算
+   沉淀完成。`memory_put()` 只写 `site-memory.lines`，不会创建其他 artifact。
+4. 先收集经验并完成持久化，再调用 `finalize_tabs()`；它必须是最后一个浏览器动作。
+   之后仍可读写 memory 文件，但禁止再次调用浏览器 helper。
 
 ```text
 1. 有「贵的知识」吗？（坑/意外结构/解锁/可迁移解法/跑通的代码）
@@ -310,7 +288,7 @@ skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep
    - 站点特有事实        → 原子行 site-memory.lines
    - 可迁移解法          → techniques/<name>.md（关键词+触发信号+解法）
    - 重复稳定流程        → runbooks/<name>.py（跑通的代码 + header）
-   - 同域已 ≥2 次命中    → 顺手把原子行聚合进 playbooks/<domain>.md
+   - 同域已有多条事实    → 继续追加原子行，不创建站点摘要文件
 3. 怎么落？OBU heredoc：memory_put(...)；其他环境：按 §4.1 行格式手写。
    不确定格式 → 读 README / memory.md。
 ```
@@ -321,27 +299,32 @@ skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep
 - **机械校验**：`scripts/obu-memory-check.sh` 查出坏行、临时 ref、密钥。
 - **README 自描述**：错误永远可以参照规则被修正回来。
 
-### 9.4 SKILL.md 新增小节草案
+### 9.4 SKILL.md 主流程草案
 
-`skills/open-browser-use/SKILL.md` 新增一节，并新增
-`references/memory.md`（格式 + 决策树 + 示例）：
+`skills/open-browser-use/SKILL.md` 使用线性 Process 步骤；
+`references/memory.md` 提供格式、checkpoint 与示例：
 
 ```markdown
-## 经验沉淀 (site memory)
-- 存储：~/.open-browser-use/memory/（OBU_MEMORY_DIR 可覆盖），纯文件。
-  读用 grep/find/read，不需要任何 memory 命令。
-- 访问未知 domain 前：读该域原子行 + playbook + @tech 链接
-  （`grep "domain=<domain>|" site-memory.lines`，写法见 references/memory.md）。
-- 同一目标尝试 ≥2 次仍失败、或页面正常但数据缺失/事件不触发（静默失败）时，
-  **无条件**先全量读 techniques/ 索引（标题+关键词+触发信号），再按域读；
-  不猜关键词，不硬试更多轮。
-- 收尾时只写「贵的知识」：OBU heredoc 内用 `memory_put(...)`（坑/意外结构/
-  解锁动作，一行一个事实）；解法可迁移就提炼成技术文件（`tech=`）。
-  顺利流程不写；敏感信息不写。
-- 高价值流程存为 runbook（跑通代码 + header），一键复跑即验证：
-  `obu < runbooks/<name>.py`。
-- 写经验前不确定格式时，先读 references/memory.md（或 memory 根 README.md）。
-- 细节与反爆炸规则: references/memory.md
+## Process
+### 1. Initialize
+Use `obu taskinit ...`; finish when the task directory and selected target are known.
+### 2. Load context
+Before the first browser action for each domain, read its rows and linked
+techniques/runbooks; inspect the runtime API. Finish when the next helper contract
+is known. After two failures or a silent failure, read the complete techniques
+index before another attempt.
+### 3. Execute
+Use task files with `obu exec`; verify each action and the requested result. Finish
+when the result is verified or the bounded failure is recorded.
+### 4. Finish
+Before the final response, review scripts/results for expensive knowledge. Persist
+site facts with `memory_put(...)`, create/update techniques or verified runbooks,
+and re-read every written row/file. Explicitly record the no-artifact decision when
+nothing is worth saving. Then call `finalize_tabs()` exactly once as the last browser
+action; after it, only memory file operations may continue.
+### 5. Report
+Report verified results and limitations only after persistence and cleanup complete.
+
 ```
 
 ## 10. 与仓库既有体系的分工
@@ -375,7 +358,7 @@ tools/ + browser-tools/，运行时 `site.learnContext(url)` 按域匹配、`sit
 
 1. **「map, not diary」纪律**：只记站点的形状（结构/入口/坑），不记任务流水账。
    等价于本设计的 trap-map 内容纪律，规范里统一用这个表述。
-2. **升级层可机检**：`scripts/obu-memory-check.sh` 校验 playbook/technique——
+2. **升级层可机检**：`scripts/obu-memory-check.sh` 校验 technique/runbook——
    域名合法、无临时 ref（`@N`/`ref=`）、无密钥/私人链接、行格式、索引预算。
    不要求行为测试，但把「能机检的约束」从口头规范变成机械检查
    （独立脚本，不进命令面）。
@@ -383,8 +366,8 @@ tools/ + browser-tools/，运行时 `site.learnContext(url)` 按域匹配、`sit
    只有 2 个站点进入，二是 skill 包体积随站点数膨胀。本设计保持经验是
    skill 外的数据层，`OBU_MEMORY_DIR` 指向仓库目录即为团队共享版的分发。
 
-不吸收的部分：manifest + 工具 + 行为测试的包结构（正好对应本设计
-「一行捕获 + 手动聚合升级」的升级层，见 §5 / §7）。
+不吸收的部分：manifest + 工具 + 行为测试的包结构（超出本设计
+「一行捕获 + 手动提炼升级」的范围，见 §5 / §7）。
 
 ## 13. 一期落地（已完成）
 

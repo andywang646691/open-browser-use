@@ -1,143 +1,149 @@
 ---
 name: open-browser-use
-description: "Always use open-browser-use(OBU) for any web interaction: automation, scraping, testing, or site/app work."
+description: "Use Open Browser Use (OBU) for browser automation, web scraping, site testing, or any task that reads or changes a web page in the user's Chrome."
 ---
 
 # Open Browser Use
 
-Thin CLI over the Chrome DevTools Protocol: knowing CDP means knowing this
-tool — `cdp("Domain.method", **params)`, `evaluate(js)`, and a few tab
-helpers on the user's real Chrome profile.
+Use OBU's real Chrome session through CDP: `cdp("Domain.method", **params)`,
+`evaluate(js)`, and the tab helpers below.
 
-## Setup (per task — one command)
+## Process
+
+### 1. Initialize
+
+For a new task, run one setup command:
 
 ```sh
 obu taskinit <domain>/<slug> [--browser X --profile Y]
 ```
 
-One command for the whole startup ritual: creates the task workspace, sets
-session/browser/profile for the task, and prints the api-sheet.
-`obu exec <file>` then uses that setup automatically. Many connected
-targets → it stops and lists them: ask the user which to use, never silently
-pick, then rerun with `--browser/--profile`.
+This creates the task workspace, selects the browser/profile, and prints the
+runtime API sheet. If multiple targets are connected, stop and ask the user
+which target to use; never silently choose one. To continue an existing task,
+run `obu exec <file>` from its existing task directory instead of starting a
+new `taskinit` instance.
 
-Each run creates a fresh time-stamped instance — the printed path is the one
-to work in. To continue an old task, `obu exec` its scripts directly (its
-setup loads automatically); only start a new instance with taskinit.
+**Done when:** the task directory and the user-selected browser target are
+known.
 
-## Start a task
-Prefer `obu taskinit` (Setup above) — it sets these for you, and
-`obu exec` uses them automatically. Manual state also works (flags still
-override):
+### 2. Load context
 
-```sh
-export OBU_SESSION_ID="obu-<task-slug>"
-export OBU_BROWSER="<browser>"   # after the user chose one
-export OBU_PROFILE="<profile>"   # after the user chose one
-```
-Don't switch browser/profile/session_id mid-task.
+Before the first browser action for each normalized domain in the current OBU
+task:
 
-## Task workspace
-Every script for this task lives under
-`~/.open-browser-use/tasks/<domain>/<slug>/` (slug = OBU_SESSION_ID suffix;
-`$OBU_TASK_DIR` overrides the root). Run it with `obu exec path.py` so
-failed attempts stay on disk, tracebacks carry the file's own line numbers,
-and the flow becomes an audit trail; a stable flow at wrap-up can be promoted
-to a runbook (see references/memory.md).
+1. Read the domain rows from
+   `~/.open-browser-use/memory/site-memory.lines` (or the same file below
+   `$OBU_MEMORY_DIR`).
+2. Read every linked
+   `~/.open-browser-use/memory/techniques/<name>.md` and
+   `~/.open-browser-use/memory/runbooks/<name>.py`.
+3. Run `obu api-sheet` once, then use `help(x)` for helpers whose exact
+   signature, return shape, or ordering matters. The runtime docstring is the
+   source of truth, not this file.
 
-## Browser work
-Task scripts are real-Python files; helpers are pre-imported as plain Python
-functions, so the whole language works (if/for, comprehensions, f-strings,
-`len(...)`, slices). Values pass positionally or as keyword args — never
-hand-written serialization. Write each script in the task workspace above,
-then run it as a file:
+When an approach has failed twice, or the page is normal but data/events are
+missing, enumerate all `techniques/*.md` under the memory root and read each
+file's title, 关键词, and 触发信号 before another attempt.
+
+**Done when:** the target's existing memory has been loaded and the helper
+contracts needed for the next action are known.
+
+### 3. Execute
+
+Write every attempt as a real Python file in the task workspace and run it with:
 
 ```sh
 obu exec ~/.open-browser-use/tasks/<domain>/<slug>/02_fetch.py
 ```
 
-Tracebacks report the file's own line numbers — the file is the source of
-truth, so failed attempts stay diffable on disk.
+The task workspace is the audit trail: failed attempts stay diffable and
+tracebacks retain the file's own line numbers. `obu exec` supports normal
+Python; helpers are pre-imported and accept Python arguments, so do not hand
+write JSON or shell serialization.
 
-### Learn the API first — always
-Don't write code from memory or from this file: the runtime API is the source
-of truth. Run `obu api-sheet` once (one line per helper: signature + doc
-line), then `help(x)` only for the helper you're actually about to use —
-signature, params, return shape, gotchas. Both `help(finalize_tabs)` and
-`help("finalize_tabs")` work.
+During browser work:
 
-Don't spend a script run just to learn the API: fold a `print(help(x))` into
-the script you're writing. Every helper carries its contract in its
-docstring, so docstrings are always current — when a call looks different
-than expected, re-`help()` it instead of guessing.
+- List tabs before acting; use `user_tabs()` for existing user tabs and never
+guess an id.
+- Read the accessibility tree first; use `evaluate(js)` when the tree lacks
+  the needed data.
+- Act through `evaluate(js)` and verify the resulting state after every action.
+- Wait for observable conditions with a bounded retry loop. Use a short settle
+  delay only when no condition can be observed.
+- For virtual-scrolled or incomplete DOM lists, prefer network capture with
+  `wait_for_event` over scraping only rendered nodes.
+- Use coordinates or raw CDP only when DOM/JS access is insufficient; inspect
+  the relevant helper contract first.
 
-### How to use it
-- **Process model**: each `obu exec <file>` run is a fresh process and the
-  local tab pointer resets, but the session's *last active tab* persists —
-  `evaluate()`/`cdp()` resume it automatically, so you usually don't need to
-  reclaim a tab. Explicit `open_tab()`/`claim_tab()` is for picking a
-  *different* tab: target one URL among several session tabs, take over a
-  user tab (`user_tabs()`), or work in a session with no tabs yet. If the
-  session has no tabs at all (e.g. `finalize_tabs()` already closed them),
-  browser calls error with "no current tab" — that means there is genuinely
-  nothing to work on.
-- **Tabs**: never guess tab ids — list them first, then act on one. Session
-  tabs open in the user's Chrome window by default — don't claim the user's
-  existing tabs unless they explicitly asked for that page — `user_tabs()`
-  lists them; session tabs are your own.
-- For full data of virtual-scrolled lists, the network-capture pattern
-  (`wait_for_event`) remains the robust data-plane choice: it returns every
-  response, not just what the DOM renders.
-- **Read**: use the accessibility tree first; fall back to `evaluate(js)` only
-  when the tree lacks the element.
-- **Act**: via `evaluate(js)` — click, focus, set values — and always verify the
-  result after acting.
-- **Wait on conditions, not fixed sleeps**: when the state you need is
-  observable, poll for it (loop with a bounded retry budget until it holds)
-  instead of a blind `time.sleep`. Use a short settle delay only where no
-  condition can be observed.
-- **Coordinates / raw CDP**: only when DOM/JS access isn't enough; `help()` on
-  the relevant helpers for the exact steps and their order.
+Session state persists the last active tab across `obu exec` processes, but the
+local Python tab pointer resets. Use `open_tab()` or `claim_tab()` only when
+selecting a different tab or taking over a user tab explicitly requested by the
+user.
 
-## End a task
-`finalize_tabs()` exactly once, last browser action; keep empty by default.
-It returns what it closed (`closed`/`released`/`kept`) — a `warning` means
-nothing was closed: re-verify with `user_tabs()` and clean leftovers via
-`close_tab(id)`.
-Keep a tab only when the user needs the live page after the turn, e.g. `finalize_tabs(keep=[{"tabId": id, "status": "deliverable"}])`.
-No browser tools after. Details: [references/tabs.md](references/tabs.md).
+**Done when:** the requested result is verified, or a bounded failure and its
+observable cause have been recorded in the task workspace.
 
-## Experience memory (site memory)
-Deposit each visit's hard-won knowledge so the next agent reuses it; the
-skill surface stays 1 and only data grows (never per-site skills). Store:
-`~/.open-browser-use/memory/` (override: `$OBU_MEMORY_DIR`). Plain files —
-no memory commands; read with your own tools, write via one helper.
+### 4. Finish: persist, verify, clean up
 
-- Before a domain new to this session, pre-fetch: `grep "domain=<domain>|"
-  site-memory.lines` (+ playbook, runbooks, `tech=` links). Write a line at
-  wrap-up with `memory_put(...)`; introspect `help(memory_put)` for kinds.
-- On repeated failure (≥2 tries, or page normal but data/events silently
-  missing), unconditionally read the whole techniques/ index first — don't
-  guess keywords, don't grind more rounds.
-- Record only "expensive" knowledge: traps, surprises, unlocks, transferable
-  fixes, working code. Routine success isn't worth a row; no credentials.
-- Transferable fix → `techniques/<name>.md`; stable repeat flow →
-  `runbooks/<name>.py` (verified code + header, rerun `obu exec <file>`).
-- Details, formats, decision tree, examples: [references/memory.md](references/memory.md).
+Before writing the final response, complete this sequence exactly once:
 
-## Hard rules
-- The user's real Chrome: never inspect cookies, passwords, session stores.
-- Never steal focus or visibly rearrange the user's windows/tabs
-  (bringToFront, moves, resizes, tabs in their focused window). If a task
-  seems to require it, try a non-disruptive alternative first;
-  if none exists, ask the user before doing it.
-- Ask before uploads, clipboard, form submits, purchases, sending, deleting, or other externally visible changes.
-- Login walls: stop and ask; signed-in SSO may be used as-is.
+1. **Checkpoint.** If the task had a failed attempt, surprising page/API
+   structure, hard-won fix, transferable technique, or verified repeatable
+   flow, load [references/memory.md](references/memory.md) and persist it.
+   A prose explanation of difficulties is not persistence.
+2. **Choose the artifact.** Write one concise site fact per row with
+   `memory_put(...)`; create/update a cross-site
+   `~/.open-browser-use/memory/techniques/<name>.md`; or save a verified,
+   repeatable script as
+   `~/.open-browser-use/memory/runbooks/<name>.py`. If no expensive knowledge
+   exists, explicitly decide that nothing should be written.
+3. **Verify persistence.** Re-read every row/file written with native file
+   tools. `memory_put()` only appends to `site-memory.lines`; it does not create
+   technique or runbook files. A checkpoint is complete only when every chosen
+   artifact exists and is readable, or the no-artifact decision is explicit.
+4. **Finalize browser state.** Call `finalize_tabs()` exactly once, as the last
+   browser action, keeping tabs only when the user needs the live page. After
+   this call, do not call any browser helper; file reads and writes are still
+   allowed.
+
+Use `kind="fail"` for a trap, `kind="surprise"` for unexpected structure, and
+`kind="tip"` sparingly for a hard-won positive pattern. `fail` and `surprise`
+require an actionable `unlock`. Never persist credentials, cookies, passwords,
+private links, or routine success. Write a map of reusable site structure, not
+a task diary.
+
+**Done when:** persistence has been verified or explicitly ruled out, and
+`finalize_tabs()` has completed exactly once.
+
+### 5. Report
+
+Only after the finish sequence, report the verified result, relevant
+limitations, and unresolved failures. Claim that experience was saved only when
+the corresponding row/file was re-read successfully.
+
+**Done when:** the response distinguishes verified results, limitations, and
+persisted experience.
+
+## Safety
+
+- Use the user's real Chrome without inspecting cookies, passwords, or session
+  stores.
+- Preserve the user's focus and window layout. Do not bring tabs forward, move
+  or resize windows, or claim existing user tabs unless the user requested that
+  page.
+- Ask before uploads, clipboard access, form submissions, purchases, messages,
+  deletions, or other externally visible changes.
+- Stop at login walls and ask; signed-in SSO may be used as-is.
 - Ask before installing extensions or launching browsers.
-- Never guess tab ids — list first, then act.
 
 ## References
-Read when stuck, not up front:
-- [references/tabs.md](references/tabs.md): tab lifecycle, claiming, deliverable/handoff, file choosers, downloads, clipboard.
-- [references/installation.md](references/installation.md): install and verify.
-- [references/troubleshooting.md](references/troubleshooting.md): connection failures, stale sockets.
+
+- [references/tabs.md](references/tabs.md): tab lifecycle, claiming,
+  deliverable/handoff, file chooser, downloads, and clipboard details.
+- [references/memory.md](references/memory.md): memory paths, artifact formats,
+  checkpoint decision tree, deduplication, and staleness rules.
+- [references/installation.md](references/installation.md): installation and
+  verification.
+- [references/troubleshooting.md](references/troubleshooting.md): connection
+  failures and stale sockets.
