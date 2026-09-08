@@ -1,38 +1,32 @@
-"""obu exec runner — executes a task script *file* with the prelude.
+"""Execute an OBU task as a Python file, with helpers pre-imported.
 
-The Go CLI writes this runner and script_helpers.py into a temp dir and
-executes `python3 -u <runner> <target.py>` with OBU_EXEC_PRELUDE_DIR set.
-Unlike the heredoc path (stdin concat, which reports tracebacks as <stdin>
-with prelude-shifted line numbers), the target file is compiled with its real
-path, so SyntaxError/RuntimeError tracebacks point at the file's own line
-numbers — the file is a first-class citizen, exactly what the task workspace
-workflow needs.
-
-The prelude module's globals are injected wholesale (excluding dunders) so
-the script sees the same surface as heredoc mode, including single-underscore
-names like _SESSION_ID and _help.
+The Go CLI writes this runner and the prelude into a private temporary
+folder. runpy supplies the task's __file__, __name__ and __main__ module,
+while the task directory is first on sys.path for sibling imports. The
+caller's working directory is intentionally unchanged.
 """
 
 import os
+import runpy
 import sys
 
-# argv: [runner, target, args...] -> [target, args...]
-target = sys.argv[1]
-sys.argv = [target] + sys.argv[2:]
 
-prelude_dir = os.environ.get("OBU_EXEC_PRELUDE_DIR", "")
-if not prelude_dir:
-    sys.stderr.write("obu exec: OBU_EXEC_PRELUDE_DIR is empty; run through `obu exec`, not directly\n")
-    sys.exit(1)
+def main():
+    # argv: [runner, target, args...] -> [target, args...]
+    target = os.path.abspath(sys.argv[1])
+    sys.argv = [target] + sys.argv[2:]
+    prelude_dir = os.environ.get("OBU_EXEC_PRELUDE_DIR", "")
+    if not prelude_dir:
+        sys.exit("obu exec: OBU_EXEC_PRELUDE_DIR is empty; run through `obu exec`")
 
-sys.path.insert(0, prelude_dir)
-import script_helpers as _obu_helpers  # noqa: E402
+    sys.path.insert(0, prelude_dir)
+    import script_helpers
 
-for _name in list(vars(_obu_helpers)):
-    if not _name.startswith("__"):
-        globals()[_name] = vars(_obu_helpers)[_name]
-del _name, _obu_helpers
+    helpers = {name: value for name, value in vars(script_helpers).items()
+               if not name.startswith("__")}
+    sys.path.insert(0, os.path.dirname(target))
+    runpy.run_path(target, init_globals=helpers, run_name="__main__")
 
-with open(target, encoding="utf-8") as _fh:
-    _source = _fh.read()
-exec(compile(_source, target, "exec"), globals())
+
+if __name__ == "__main__":
+    main()

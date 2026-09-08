@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestParseTaskArgNormalizesAndValidates(t *testing.T) {
@@ -28,9 +27,17 @@ func TestParseTaskArgNormalizesAndValidates(t *testing.T) {
 		"x.com/__pycache__",
 		"x.com/.DS_Store",
 		"x.com/a/b\\c",
+		"../slug", "./slug", "www./slug", "www.../slug", " /slug",
+		"a\\b/slug", "C:/slug", "__pycache__/slug", ".DS_Store/slug",
+		"x.com/bad\nOBU_PROFILE=other", "bad\ndomain/slug", "x.com/\x00",
 	} {
 		if _, _, err := parseTaskArg(bad); err == nil {
 			t.Errorf("expected error for %q", bad)
+		}
+	}
+	for _, valid := range []string{"localhost/task", "intranet_host/task", "例子.测试/抓取", "x.com/task with spaces"} {
+		if _, _, err := parseTaskArg(valid); err != nil {
+			t.Errorf("flexible domain/slug rejected: %q: %v", valid, err)
 		}
 	}
 	// www. repeated is fine, and slug length capped
@@ -191,23 +198,61 @@ func TestExecCommandEnvFileAndFlagPriority(t *testing.T) {
 	}
 }
 
-func TestTaskDirNameIsUniquePerInstance(t *testing.T) {
-	first := taskDirName("timeline-posts", time.Date(2026, 8, 27, 16, 54, 30, 0, time.Local))
-	second := taskDirName("timeline-posts", time.Date(2026, 8, 27, 16, 55, 1, 0, time.Local))
-	if first == second {
-		t.Fatal("two instances must not share a directory name")
+func TestTaskWorkspaceNameUsesOnlySlugAndUniqueSuffix(t *testing.T) {
+	root := t.TempDir()
+	path, session, err := createTaskWorkspace(root, "example.test", "timeline-posts", taskTarget{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if first != "timeline-posts-20260827-165430" {
-		t.Errorf("unexpected stamped name: %q", first)
+	name := filepath.Base(path)
+	suffix, ok := strings.CutPrefix(name, "timeline-posts-")
+	if !ok || suffix == "" || strings.Contains(suffix, "-") {
+		t.Fatalf("want slug plus unique suffix, without a timestamp: %q", name)
 	}
-	// lexicographic order equals time order (sortable in tasksizes)
-	if !(first < second) {
-		t.Errorf("stamped names must sort by time, got %q >= %q", first, second)
+	if filepath.Dir(path) != filepath.Join(root, "example.test") {
+		t.Fatalf("task escaped domain directory: %s", path)
 	}
-	// decreasing timestamps sort after newer ones
-	older := taskDirName("timeline-posts", time.Date(2026, 8, 20, 9, 0, 0, 0, time.Local))
-	if !(older < first) {
-		t.Errorf("sort order broken: %q should be < %q", older, first)
+	if session != "obu-example.test-"+name {
+		t.Fatalf("session must retain domain and instance name: %q", session)
+	}
+}
+
+func TestTaskWorkspacePreservesAndResumesLegacyTimestampDirectory(t *testing.T) {
+	requirePython3(t)
+	root := t.TempDir()
+	legacy := filepath.Join(root, "example.test", "scan-20260827-165430")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const session = "obu-scan-20260827-165430"
+	envPath := filepath.Join(legacy, taskEnvFileName)
+	original := []byte("OBU_SESSION_ID=" + session + "\nCUSTOM_SETTING=keep\n")
+	if err := os.WriteFile(envPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(legacy, "01.py")
+	if err := os.WriteFile(script, []byte("print(_SESSION_ID)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _, err := createTaskWorkspace(root, "example.test", "scan", taskTarget{})
+	if err != nil || fresh == legacy {
+		t.Fatalf("new instance reused legacy directory: %q %v", fresh, err)
+	}
+	cmd := newExecCommand()
+	// Pure Python only: do not discover or connect to a real browser.
+	cmd.SetArgs([]string{"--socket", filepath.Join(root, "missing.sock"), script})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("legacy exec: %v (%s)", err, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != session {
+		t.Fatalf("legacy session changed: %q", stdout.String())
+	}
+	after, err := os.ReadFile(envPath)
+	if err != nil || !bytes.Equal(after, original) {
+		t.Fatalf("legacy env was migrated or overwritten: %q %v", after, err)
 	}
 }
 

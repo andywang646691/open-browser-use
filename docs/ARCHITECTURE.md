@@ -40,7 +40,7 @@ README 与 skill 不再宣传这两种模式。
 - `packages/open-browser-use-go/`：Go SDK 源码（内部保留，不再作为对外
   import path 宣传），package name 为 `obu`。
 - `skills/open-browser-use/`：面向 AI Agent 的 Open Browser Use skill，说明
-  如何安装、验证和使用浏览器插件、CLI、SDK 与 Browser Use 风格协议。
+  如何安装、验证和使用浏览器插件、CLI 与 Python 任务脚本。
 - `packages/`：其他跨应用复用的库、契约和共享能力。
 - `infra/`：部署、基础设施和环境定义。
 - `scripts/`：仓库级自动化脚本，供人和 Agent 直接调用。
@@ -127,10 +127,8 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
 - npm 包 `open-browser-use` 是 CLI 二进制分发入口，安装后提供
   `open-browser-use` 和 `obu`；`postinstall` 只提示用户运行显式
   `open-browser-use setup`。
-- SDK 发布包在 npm 和 PyPI 上统一命名为 `open-browser-use-sdk`，避免和 npm
-  CLI 包 `open-browser-use` 混淆。JavaScript 使用
-  `import { ... } from "open-browser-use-sdk"`；Python distribution 安装名是
-  `open-browser-use-sdk`，代码 import 模块名仍是 `open_browser_use`。
+- 内部 SDK 保留历史包名 `open-browser-use-sdk`（Python import 模块名
+  `open_browser_use`），但当前不发布 npm/PyPI；公开分发只有 CLI 包。
 - Homebrew formula 从 GitHub Release 下载平台匹配的预编译 CLI tarball，
   安装后提供 `open-browser-use` 和 `obu`，并在 caveats 中提示用户运行显式
   `open-browser-use setup`；安装阶段不依赖 Go，也不在用户机器上编译。
@@ -175,11 +173,16 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   （`script_helpers.py`）与 runner（`script_runner.py`）写入临时目录，
   spawn `python3 -u <runner> <file>`；runner 把 prelude 作为模块
   `sys.path` 导入并全量注入全局（含 `_SESSION_ID`/`_help` 等单下划线名，
-  与 heredoc 拼接模式表面一致），再 `compile(source, file, 'exec')` 执行，
-  使 SyntaxError/RuntimeError 的 traceback 携带真实文件路径和文件内行号
+  与 heredoc 拼接模式表面一致），再用 `runpy.run_path` 执行，`__file__`
+  指向任务文件、同目录模块可 import；`exec <file> -- <args...>` 把参数
+  原样传给 `sys.argv`，不改变调用方 cwd。
+  SyntaxError/RuntimeError 的 traceback 携带真实文件路径和文件内行号
   （heredoc 的 stdin 拼接会得到 `<stdin>` + prelude 偏移行号）；stdout/
   stderr 透传、python 退出码透传；`OBU_SESSION_ID` flag 显式注入子进程
   env（heredoc 与 exec 均如此，flag 优先于继承的环境变量）。
+  Python frame 读取共享半帧缓存、request 使用绝对 deadline；事件 wait 仅
+  消费匹配项，其余保留在 500 帧有界队列，异常恢复原 socket timeout。
+  无自动动作重试，具体恢复边界见 `docs/RELIABILITY.md`。
 - 会话、browser、profile 等状态提供环境变量默认值：`OBU_SESSION_ID`、
   `OBU_BROWSER`、`OBU_PROFILE`、`OBU_WINDOW_MODE` 在未显式传对应 flag
   时作为默认值兜底，flag 仍然优先。
@@ -195,15 +198,16 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
 - 任务启动仪式一条龙：`obu taskinit <domain>/<slug>` 探测并选定
   target（单 target 自动采用；多 target 列出带可复制 rerun 命令的清单并
   报错，保留"多 target 必问用户、不静默选 active window"硬规则），
-  创建 `tasks/<domain>/<slug>-<YYYYMMDD-HHMMSS>/` 时间戳实例目录（每次
-  taskinit 都是新实例，同名任务不碰撞；输出的目录路径就是工作目录，
+  创建 `tasks/<domain>/<slug>-<unique>/` 原子分配实例
+  目录（不再附加时间戳，并发 taskinit 不会复用目录；输出的目录路径就是工作目录，
   续跑旧任务直接 exec 其脚本，无需再 taskinit），写入 `.obu.env`
-  （`OBU_SESSION_ID=obu-<实例>`/browser/profile；已存在则保留并沿用其
-  session id——同一任务目录永远对应同一 session），ping 验证 target，
+  （`OBU_SESSION_ID=obu-<domain>-<实例>`/browser/profile；旧任务不迁移，
+  继续使用原 `.obu.env` 的 session id），ping 验证 target，
   并输出 api-sheet。domain 归一化与 site-memory 一致（去 `www.`、小写）；
-  slug 校验拒绝 `/`、`.`/`..`、超长与审计扫描保留名（`__pycache__`/
-  `.DS_Store`），防止破坏二层布局、路径逃逸或与 `tasksizes` 统计盲区
-  碰撞。`obu exec <file>` 只读脚本**同目录** `.obu.env`（不向上查找，
+  domain/slug 校验拒绝路径分隔符、`.`/`..`、控制字符及审计扫描保留名
+  （`__pycache__`/`.DS_Store`），slug 另有长度限制；拒绝 domain symlink。
+  selector 同时匹配 browser/profile，保存带实例的完整 target，未映射的
+  profile 使用 extension instance id，防止退回 active registry。`obu exec <file>` 只读脚本**同目录** `.obu.env`（不向上查找，
   任务强相关锚定任务目录），`--env-file` 显式覆盖；优先级
   flag > `--env-file`/`.obu.env` > 继承环境变量。
 - 任务工作区：每个任务的脚本按 `tasks/<domain>/<task-slug>/` 沉淀到
@@ -253,7 +257,7 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   仅在该窗口完全没有同名分组时才新建。
   `turnEnded` and `finalizeTabs` clear active session state when control ends
   so download notifications only fire while a browser session is active.
-- 隔离窗口模型：新 session 的标签页默认全部落进一个专属后台 Chrome 窗口
+- 隔离窗口模型：显式 `window_mode="isolated"` 的 session 标签页落进专属后台 Chrome 窗口
   （`chrome.windows.create`：`focused:false`、tabs `active:false`、非最小化、
   正常尺寸近全屏居中定位（小视口会让 SPA 虚拟列表只装少量条目）），全程不抢焦点、不打扰用户现有窗口；`session.windowId`
   持久化在 session state 中，窗口被用户关闭或 Chrome 重启后，下次创建 tab
@@ -281,7 +285,7 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   落到错误窗口就用 `tabGroups.move(groupId, {windowId})` 把整组搬回隔离窗
   口，随后删除替身、真实会话 tab 再归组，全程不离开隔离窗口；建组失败则
   静默退化为“无组、窗口式追踪”。后续 tab 因组已锚定在隔离窗口内，
-  `tabs.group({groupId, ...})` 同窗口归组天然可靠。  user 模式（旧行为）与交付物分组。`claimUserTab` 把用户 tab
+  `tabs.group({groupId, ...})` 同窗口归组天然可靠。  user 模式（默认）保持原有分组方式。`claimUserTab` 把用户 tab
   `chrome.tabs.move` 进隔离窗口再入追踪；`getUserTabs` 排除所有 session
   自有窗口内的 tab，防止 agent 把自己的工作页当用户 tab 再 claim。
   `finalizeTabs` 无保留时关闭该窗口（仅当窗口已空，绝不连带关闭残留的

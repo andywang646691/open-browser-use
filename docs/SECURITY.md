@@ -8,7 +8,7 @@ Security fixes are expected to cover the current Chrome route:
 
 - MV3 Chrome extension under `apps/chrome-extension/`.
 - Go native host and CLI under `cmd/open-browser-use/` and `internal/`.
-- JavaScript and Python SDK packages under `packages/`.
+- Embedded Python task runtime in `cmd/open-browser-use/` and internally retained SDK packages under `packages/` (not currently published).
 - Installer, manifest, release, and skill documentation that affects how users enable browser control.
 
 Experimental references, reverse-engineering notes, and archived planning material are useful context, but they are not independently supported interfaces unless they are wired into the current route.
@@ -39,11 +39,11 @@ The Chrome route intentionally exposes powerful browser automation primitives to
 
 隔离窗口的会话 tab 被遮挡时，浏览器 compositor 会节流/挂起其渲染与懒加载管线
 (rAF + IntersectionObserver)，`document.visibilityState` 表现由窗口遮挡驱动。
-OBU 对这些 tab 在**首次 debugger attach** 时自动应用 CDP 层唤醒，并在**主 frame
+OBU 对所有会话 tab（包括 user 模式的后台 tab）在**首次 debugger attach** 时自动应用 CDP 层唤醒，并在**主 frame
 导航**时自动重放：
 
 - `Emulation.setFocusEmulationEnabled(true)`：页面的 `document.hasFocus()` 恒为
-  true。只在隔离窗口会话 tab 上生效，user 模式（共享用户窗口）不生效；
+  true。隔离窗口与 user 模式（共享用户窗口）的会话 tab 都生效；
   不抢真实焦点。
 - `Page.setWebLifecycleState({state:"active"})`：解除 renderer 对 occluded
   窗口的节流，让 IO/rAF 驱动的懒加载恢复。
@@ -64,7 +64,7 @@ The Go native host bridges Chrome Native Messaging stdio to a local Unix socket.
 
 - The default socket registry is under `/tmp/open-browser-use/`.
 - `active.json` is written with `0600` permissions.
-- Socket files are created with the current user's local permissions.
+- Socket files are explicitly set to `0600`; newly created socket directories use `0700`.
 - The CLI may scan the socket directory when the active registry is missing or stale, so callers should treat access to the user's local account as access to the browser automation channel.
 
 Planned hardening includes client tokens, peer validation, safer stale-socket handling, and security-focused failure-path tests.
@@ -88,6 +88,21 @@ Clipboard, download, and file chooser features are sensitive.
 - Clipboard helpers run through the controlled page context and should only be called for explicit user workflows.
 - Download paths and file chooser paths can reveal private filesystem structure; do not log them unless needed, and redact them from shared reports.
 - Integrations should confirm uploads, downloads, file selection, form submission, purchases, deletion, and external message sending before execution.
+
+## Task Runtime Boundaries
+
+- `taskinit` validates both domain and slug against path traversal, control
+  characters and audit-reserved names; domain symlinks are refused. This is
+  filesystem hygiene, not a sandbox against another process of the same user.
+- New task instance directories are atomically allocated with `0700`; `.obu.env`
+  is written with `0600`. Existing task directories/files are not migrated.
+- Task selector persistence retains browser instance identity; ambiguous live
+  matches require a user choice instead of silently using the active target.
+- Event timeout URL hints omit credentials, query and fragment. Paths, CDP
+  payloads, user predicates and script output can still contain private data;
+  this is not comprehensive log redaction.
+- Partial send failures are never automatically replayed: delivery and browser
+  side effects may already have occurred. See [RELIABILITY.md](RELIABILITY.md).
 
 ## Secrets And Data Handling
 

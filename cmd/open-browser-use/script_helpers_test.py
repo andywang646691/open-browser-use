@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for script_helpers.py (obu heredoc prelude).
 
-Run from the package directory (go test spawns this file), e.g.:
+Run directly, or through scripts/ci.sh's unittest discovery, e.g.:
     python3 script_helpers_test.py
 
 Spins up a fake Unix socket server that speaks the Browser Use JSON-RPC
@@ -12,6 +12,7 @@ import importlib.util
 import json
 import math
 import os
+from pathlib import Path
 import socket
 import struct
 import sys
@@ -125,6 +126,13 @@ class PreludeTest(unittest.TestCase):
         self.sh = load_module()
 
     def tearDown(self):
+        if self.sh._CONN is not None:
+            self.sh._CONN.close()
+        else:
+            # Invalid-argument tests never connect; unblock the fake's accept.
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                conn.connect(self.host.sock_path)
+        self.host.join(1)
         self.host.server.close()
         try:
             os.unlink(self.host.sock_path)
@@ -217,7 +225,7 @@ class PreludeTest(unittest.TestCase):
         self.host.responses["createTab"] = {"id": 9, "url": ""}
         # explicit override wins and reaches the wire
         self.sh.open_tab("", window_mode="user")
-        # default leaves the key absent so the extension default (isolated) applies
+        # default leaves the key absent so the extension default (user) applies
         self.sh.open_tab()
         creates = [r for r in self.host.requests if r["method"] == "createTab"]
         self.assertEqual(len(creates), 2)
@@ -572,7 +580,8 @@ class PreludeTest(unittest.TestCase):
             )
         msg = str(ctx.exception)
         self.assertIn("HomeTimeline.bundle.js", msg)
-        self.assertIn("HomeTimeline?count=20", msg)
+        self.assertIn("HomeTimeline", msg)
+        self.assertNotIn("count=20", msg)
         self.assertIn("Network.responseReceived URLs", msg)
 
     def test_wait_for_event_rejects_bad_args(self):
@@ -627,16 +636,18 @@ class PreludeTest(unittest.TestCase):
     def test_memory_put_accepts_subject_body_aliases(self):
         # Agents guess the kwarg names (subject=/body= instead of note=); map
         # them instead of failing with a bare TypeError.
-        tmp = tempfile.mkdtemp(prefix="obu-mem-test-")
+        temp = tempfile.TemporaryDirectory(prefix="obu-mem-test-")
+        self.addCleanup(temp.cleanup)
+        tmp = temp.name
         old = os.environ.get("OBU_MEMORY_DIR")
         os.environ["OBU_MEMORY_DIR"] = tmp
         try:
             path = self.sh.memory_put("x.com", kind="tip", subject="s", body="b")
-            line = open(path, encoding="utf-8").read().strip()
+            line = Path(path).read_text(encoding="utf-8").strip()
             self.assertIn("domain=x.com", line)
             self.assertIn("note=s b", line)
             path2 = self.sh.memory_put("x.com", kind="fail", note="n", how="h")
-            line2 = open(path2, encoding="utf-8").read().strip()
+            line2 = Path(path2).read_text(encoding="utf-8").strip()
             self.assertIn("kind=fail", line2)
             self.assertIn("unlock=h", line2)
         finally:

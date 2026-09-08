@@ -35,24 +35,46 @@ _CURRENT_TAB = None
 _NEXT_REQ_ID = 0
 _TIMEOUT = float(os.environ.get("OBU_SCRIPT_TIMEOUT_SECONDS", "10"))
 # Bounded tail of id-less notification frames (onCDPEvent / heartbeat) that
-# arrived while a request was being answered. wait_for_event() drains it first,
-# so events that landed during other helper calls are not lost.
+# arrived while a request was being answered. wait_for_event() scans it first
+# and consumes only a match; the oldest frames are evicted when it is full.
 _EVENT_QUEUE = deque(maxlen=500)
+# Shared by request and event reads. A timeout must not discard a partial
+# header/body: the next read continues that same frame, not a new header.
+_RECV_BUFFER = bytearray()
+_MAX_FRAME_BYTES = 64 * 1024 * 1024  # same limit as internal/wire
 
 
-def _read_exact(conn, count):
-    chunks = []
-    remaining = count
-    while remaining > 0:
-        chunk = conn.recv(remaining)
+def _set_deadline(conn, deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise socket.timeout("obu request deadline exceeded")
+    conn.settimeout(remaining)
+
+
+def _read_frame(conn, deadline):
+    while True:
+        needed = 4
+        if len(_RECV_BUFFER) >= 4:
+            length = struct.unpack("@I", _RECV_BUFFER[:4])[0]
+            if length > _MAX_FRAME_BYTES:
+                raise RuntimeError("obu frame too large: {} > {}; restart the script".format(
+                    length, _MAX_FRAME_BYTES))
+            needed += length
+            if len(_RECV_BUFFER) >= needed:
+                payload = bytes(_RECV_BUFFER[4:needed])
+                del _RECV_BUFFER[:needed]
+                body = json.loads(payload.decode("utf-8"))
+                if not isinstance(body, dict):
+                    raise RuntimeError("obu frame must be a JSON object")
+                return body
+        _set_deadline(conn, deadline)
+        chunk = conn.recv(min(needed - len(_RECV_BUFFER), 65536))
         if not chunk:
             raise RuntimeError("obu socket closed mid-frame")
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+        _RECV_BUFFER.extend(chunk)
 
 
-def _get_conn():
+def _get_conn(timeout=None):
     """Lazily open the host socket and return it."""
     global _CONN
     if _SOCKET_ERROR:
@@ -62,12 +84,15 @@ def _get_conn():
             "no obu socket: env OBU_SCRIPT_SOCKET is empty (run through `obu`, not directly)"
         )
     if _CONN is None:
-        _CONN = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        _CONN.settimeout(_TIMEOUT)
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        conn.settimeout(_TIMEOUT if timeout is None else timeout)
         try:
-            _CONN.connect(_SOCKET_PATH)
+            conn.connect(_SOCKET_PATH)
         except OSError as exc:
-            raise RuntimeError("cannot connect to obu socket {}: {}".format(_SOCKET_PATH, exc))
+            conn.close()
+            raise RuntimeError("cannot connect to obu socket {}: {}".format(_SOCKET_PATH, exc)) from exc
+        _RECV_BUFFER.clear()
+        _CONN = conn
     return _CONN
 
 
@@ -79,7 +104,7 @@ def _request(method, params=None):
     being dropped; any other stray frames are skipped, never misread as this
     request's result.
     """
-    global _NEXT_REQ_ID
+    global _NEXT_REQ_ID, _SOCKET_ERROR
     if _SOCKET_ERROR:
         raise RuntimeError("obu: " + _SOCKET_ERROR)
     conn = _get_conn()
@@ -96,25 +121,39 @@ def _request(method, params=None):
     if _WINDOW_MODE:
         request["params"].setdefault("window_mode", _WINDOW_MODE)
     payload = json.dumps(request).encode("utf-8")
-    _CONN.sendall(struct.pack("@I", len(payload)) + payload)
-    while True:
-        header = _read_exact(_CONN, 4)
-        length = struct.unpack("@I", header)[0]
-        body = json.loads(_read_exact(_CONN, length).decode("utf-8"))
-        if body.get("id") != request_id:
-            if not body.get("id"):
-                # Id-less notification (onCDPEvent/heartbeat broadcast): keep
-                # it for wait_for_event() instead of dropping it.
-                _EVENT_QUEUE.append(body)
-            # Another client's response frame: skip and keep reading until
-            # this request's response arrives.
-            continue
-        if "error" in body:
-            message = body["error"]
-            if isinstance(message, dict):
-                message = message.get("message", str(message))
-            raise RuntimeError("obu {}: {}".format(method, message))
-        return body.get("result")
+    if len(payload) > _MAX_FRAME_BYTES:
+        raise RuntimeError("obu request frame too large")
+    deadline = time.monotonic() + _TIMEOUT
+    previous_timeout = conn.gettimeout()
+    try:
+        _set_deadline(conn, deadline)
+        try:
+            conn.sendall(struct.pack("@I", len(payload)) + payload)
+        except OSError:
+            # sendall cannot report how much of the frame reached the peer.
+            # Do not reuse a potentially desynchronised stream or reconnect
+            # and replay an action whose delivery status is unknown.
+            _SOCKET_ERROR = ("request write failed; delivery is unknown; restart the script "
+                             "and verify browser state before retrying")
+            raise
+        while True:
+            body = _read_frame(conn, deadline)
+            if body.get("id") != request_id:
+                if "id" not in body:
+                    _EVENT_QUEUE.append(body)
+                # Late responses are not notifications. Never replay a timed
+                # out action: it may already have had a browser side effect.
+                continue
+            if "error" in body:
+                message = body["error"]
+                if isinstance(message, dict):
+                    message = message.get("message", str(message))
+                raise RuntimeError("obu {}: {}".format(method, message))
+            return body.get("result")
+    finally:
+        conn.settimeout(previous_timeout)
+        if _SOCKET_ERROR:
+            conn.close()
 
 
 def _coerce_tab_id(tab_id, helper):
@@ -450,6 +489,18 @@ def evaluate(js):
         return _runtime_value(_run(_wrap_js_function(js)), _wrap_js_function(js))
 
 
+def _diagnostic_url(url):
+    """Keep endpoint hints, not URL credentials/query/fragment, in errors."""
+    from urllib.parse import urlsplit, urlunsplit
+    try:
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https"):
+            return "(non-http URL)"
+        return urlunsplit((parts.scheme, parts.netloc.rsplit("@", 1)[-1], parts.path, "", ""))[:160]
+    except ValueError:
+        return "(invalid URL)"
+
+
 def wait_for_event(method, predicate=None, timeout=30.0):
     """Block until a CDP event with the given method arrives; return its params.
 
@@ -462,6 +513,8 @@ def wait_for_event(method, predicate=None, timeout=30.0):
         evaluate("location.reload()")
         params = wait_for_event("Network.responseReceived",
                                 predicate=lambda event: "HomeTimeline" in event["params"]["response"]["url"])
+        wait_for_event("Network.loadingFinished",
+                       predicate=lambda event: event["params"]["requestId"] == params["requestId"])
         body = cdp("Network.getResponseBody", requestId=params["requestId"])["body"]
 
     method: CDP event name, e.g. "Network.responseReceived",
@@ -476,16 +529,24 @@ def wait_for_event(method, predicate=None, timeout=30.0):
     response URLs — so a no-match timeout (e.g. a too-narrow predicate, or
     forgetting to cdp("Network.enable")) is self-explanatory.
 
+    Only the matching event is consumed. Other events remain in the bounded
+    FIFO tail (500 frames; oldest evicted when full), including after timeout
+    or a predicate error. This is not a durable subscription. Events from all
+    connected tabs are eligible; filter event["source"]["tabId"] explicitly
+    when needed. URL diagnostics omit credentials, query and fragment.
+
     While blocked, this helper reads the host socket itself: do not fire other
-    helpers from another thread concurrently.
+    helpers from another thread or from the predicate. timeout bounds socket
+    waiting, not time spent in caller-supplied predicate code.
     """
     if not isinstance(method, str) or not method:
         raise ValueError("method is required, e.g. 'Network.responseReceived'")
     timeout = float(timeout)
-    if timeout <= 0:
-        raise ValueError("timeout must be > 0, got {!r}".format(timeout))
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and > 0, got {!r}".format(timeout))
 
-    conn = _get_conn()
+    deadline = time.monotonic() + timeout
+    conn = _get_conn(timeout=timeout)
     seen = {}
     seen_urls = {}  # method -> most recent response URLs, for timeout diagnostics
 
@@ -512,58 +573,49 @@ def wait_for_event(method, predicate=None, timeout=30.0):
                 url = ((params.get("params") or {}).get("response") or {}).get("url") or ""
                 if url:
                     urls = seen_urls.setdefault(name, [])
-                    urls.append(url)
+                    urls.append(_diagnostic_url(url))
                     del urls[:-5]
         else:
             name = frame.get("method") or "frame"
         seen[name] = seen.get(name, 0) + 1
 
-    def _drain():
-        """Consume queued frames (FIFO) until a match; count the rest."""
-        while _EVENT_QUEUE:
-            frame = _EVENT_QUEUE.popleft()
-            match = _incoming(frame)
+    previous_timeout = conn.gettimeout()
+    try:
+        # Scan the existing tail once; don't rotate/recount predicate misses.
+        for index, queued in enumerate(_EVENT_QUEUE):
+            if time.monotonic() >= deadline:
+                break
+            match = _incoming(queued)
             if match is not None:
-                return match
-            _count(frame)
-        return None
-
-    match = _drain()
-    deadline = time.monotonic() + timeout
-    while match is None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        conn.settimeout(remaining)
-        try:
-            header = _read_exact(conn, 4)
-            if not header:
-                raise RuntimeError(
-                    "obu socket closed while waiting for event {!r}".format(method)
-                )
-            length = struct.unpack("@I", header)[0]
-            body = json.loads(_read_exact(conn, length).decode("utf-8"))
-        except socket.timeout:
-            break
-        if body.get("id"):
-            # Response to a request from another thread/session: not ours.
-            continue
-        match = _incoming(body)
-        if match is None:
+                del _EVENT_QUEUE[index]
+                return match["params"]
+            _count(queued)
+        while True:
+            try:
+                body = _read_frame(conn, deadline)
+            except socket.timeout:
+                break
+            if "id" in body:
+                continue
+            try:
+                match = _incoming(body)
+            except Exception:
+                # Keep the failing event for inspection/recovery as well.
+                _EVENT_QUEUE.append(body)
+                raise
+            if match is not None:
+                return match["params"]
+            _EVENT_QUEUE.append(body)
             _count(body)
-    conn.settimeout(_TIMEOUT)
-    if match is not None:
-        return match["params"]
+    finally:
+        conn.settimeout(previous_timeout)
     top = ", ".join(
         "{} x{}".format(name, count)
         for name, count in sorted(seen.items(), key=lambda kv: -kv[1])[:5]
     ) or "(none)"
     url_hint = ""
     if seen_urls:
-        samples = [
-            ("…" if len(url) > 160 else "") + url[-160:]
-            for url in seen_urls["Network.responseReceived"][-3:]
-        ]
+        samples = seen_urls["Network.responseReceived"][-3:]
         url_hint = " ; Network.responseReceived URLs: " + " | ".join(samples)
     hint = ""
     if method.startswith("Network.") and not any(k.startswith("Network.") for k in seen):
@@ -728,7 +780,8 @@ def _api_sheet():
     import inspect
     import signal
     # Let head/less close the pipe without a BrokenPipeError traceback.
-    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     print("obu helpers \u2014 one-line sheet (script_helpers.py)")
     print()
     for name in sorted(_HELPER_NAMES):

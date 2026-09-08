@@ -96,6 +96,30 @@ you are running a stale `obu` binary — rebuild/reinstall (e.g.
 from a genuinely missing CDP result; re-issue the `cdp()` call after the
 page settles.
 
+## Event Waits And Response Bodies
+
+Enable the CDP domain before the action and wait in the same script process.
+`wait_for_event` consumes only a matching event and retains other events in a
+bounded 500-frame tail; it is not a persistent subscription. Filter by the
+relevant `event["source"]["tabId"]` and requestId when multiple tabs/requests
+are active. Do not call helpers from the predicate or concurrently on threads.
+
+For `Network.getResponseBody`, first wait for `Network.responseReceived`, then
+for `Network.loadingFinished` with the same requestId. A response event does
+not imply that its body has finished loading. See `help(wait_for_event)` for
+the sequence. Network failures, navigation and evicted bodies can still fail;
+use the actual observed error rather than assuming every timeout is a bad
+predicate.
+
+Request reads use an absolute deadline and preserve incomplete frames after a
+read timeout. Waiting or predicate errors restore the prior socket timeout.
+A failed send has unknown delivery status and disables the connection: restart
+the script and verify state before retrying, especially for actions with side
+effects. No browser action is automatically replayed.
+
+Timeout diagnostics strip URL credentials, query and fragment, but paths and
+script output may still be private; redact them before sharing logs.
+
 ## When To Escalate To The User
 
 Ask the user for help when:

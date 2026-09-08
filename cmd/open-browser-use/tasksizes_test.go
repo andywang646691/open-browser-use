@@ -141,6 +141,37 @@ func TestStaleCandidatesOnlyWhenRequested(t *testing.T) {
 	}
 }
 
+func TestTasksizesIdleDoesNotDependOnTaskNameFormat(t *testing.T) {
+	root := t.TempDir()
+	// Even a legacy name dated in the future must be aged by its file mtime.
+	names := []string{"scan-20990101-000000", "scan-2837409156"}
+	old := time.Now().Add(-100 * 24 * time.Hour)
+	for _, name := range names {
+		dir := filepath.Join(root, "example.test", name)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		file := filepath.Join(dir, "01.py")
+		if err := os.WriteFile(file, []byte("pass\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(file, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scan, err := scanTaskRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan.TotalTasks != 2 || scan.TotalFiles != 2 || scan.TotalBytes != 10 {
+		t.Fatalf("mixed directory formats must both be counted: %+v", scan)
+	}
+	candidates := staleCandidates(scan, 90)
+	if len(candidates) != 2 {
+		t.Fatalf("mtime, not task names, must determine idle candidates: %+v", candidates)
+	}
+}
+
 func TestJSONOutputStructure(t *testing.T) {
 	root := buildTestTaskRoot(t)
 	scan, err := scanTaskRoot(root)

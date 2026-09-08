@@ -24,6 +24,7 @@ node "${repo_root}/scripts/generate-chrome-extension-icons.mjs"
 (
   cd "${repo_root}"
   go test ./...
+  "${python_bin}" -m unittest discover -s cmd/open-browser-use -p '*_test.py'
   node --test apps/chrome-extension/*.test.mjs
   node --test scripts/*.test.mjs
   pnpm -r --if-present test

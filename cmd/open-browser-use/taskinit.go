@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ifuryst/open-browser-use/internal/host"
 	"github.com/spf13/cobra"
@@ -22,19 +23,11 @@ import (
 
 const maxTaskSlugLen = 64
 
-// taskDirName stamps every task instance with the local time so that repeated
-// runs of the same <domain>/<slug> never collide: the directory (and its
-// session id) is unique per instantiation. Format is sortable (YYYYMMDD-HHMMSS)
-// and stays under the slug length cap.
-func taskDirName(slug string, now time.Time) string {
-	return fmt.Sprintf("%s-%s", slug, now.Format("20060102-150405"))
-}
-
 // taskTarget is a resolved browser/profile pair from a connected profile.
 type taskTarget struct {
-	Browser  string // selector, prefer display name ("Google Chrome")
-	Profile  string // profile directory ("Default")
-	Label    string // human label for listing
+	Browser   string // composite target when available (preserves browser instance)
+	Profile   string // profile directory ("Default")
+	Label     string // human label for listing
 	Reachable bool
 }
 
@@ -49,12 +42,16 @@ func parseTaskArg(arg string) (domain string, slug string, err error) {
 	domain = arg[:idx]
 	slug = arg[idx+1:]
 	if strings.Contains(domain, "/") {
-		return "", "", errors.New("domain must not contain '/' (layout is tasks/<domain>/<slug>/")
+		return "", "", errors.New("domain must not contain '/' (layout is tasks/<domain>/<slug>/)")
 	}
 	if err := validateTaskSlug(slug); err != nil {
 		return "", "", err
 	}
-	return normalizeTaskDomain(domain), slug, nil
+	domain = normalizeTaskDomain(domain)
+	if err := validateTaskComponent(domain, "domain"); err != nil {
+		return "", "", err
+	}
+	return domain, slug, nil
 }
 
 // normalizeTaskDomain mirrors site-memory domain normalization (drop "www.",
@@ -72,22 +69,56 @@ func normalizeTaskDomain(domain string) string {
 // (__pycache__ / .DS_Store are skipped by the scanner, so a task named that
 // would be invisible to the audit).
 func validateTaskSlug(slug string) error {
-	if slug == "" {
-		return errors.New("task slug must not be empty")
-	}
 	if len(slug) > maxTaskSlugLen {
-		return fmt.Errorf("task slug too long (%d > %d chars)", len(slug), maxTaskSlugLen)
+		return fmt.Errorf("task slug too long (%d > %d bytes)", len(slug), maxTaskSlugLen)
 	}
-	if strings.ContainsAny(slug, `/\`) {
-		return errors.New(`task slug must not contain '/' or '\' (layout is tasks/<domain>/<slug>/)`)
+	return validateTaskComponent(slug, "task slug")
+}
+
+// This is a path/env boundary, not a public DNS allowlist. Keep localhost,
+// internal hosts, Unicode domains and human-readable slugs usable.
+func validateTaskComponent(value, label string) error {
+	if strings.TrimSpace(value) == "" || value == "." || value == ".." ||
+		strings.ContainsAny(value, `/\:`) || strings.ContainsFunc(value, unicode.IsControl) {
+		return fmt.Errorf("%s must be a non-empty directory name without path separators, ':' or control characters", label)
 	}
-	if slug == "." || slug == ".." {
-		return errors.New(`task slug must not be "." or ".."`)
-	}
-	if slug == "__pycache__" || slug == ".DS_Store" {
-		return fmt.Errorf("task slug %q is reserved for the audit scanner; pick another name", slug)
+	if strings.EqualFold(value, "__pycache__") || strings.EqualFold(value, ".DS_Store") {
+		return fmt.Errorf("%s %q is reserved for the audit scanner; pick another name", label, value)
 	}
 	return nil
+}
+
+func createTaskWorkspace(root, domain, slug string, target taskTarget) (string, string, error) {
+	if err := validateTaskComponent(domain, "domain"); err != nil {
+		return "", "", err
+	}
+	if err := validateTaskSlug(slug); err != nil {
+		return "", "", err
+	}
+	domainDir := filepath.Join(root, domain)
+	if err := os.MkdirAll(domainDir, 0o700); err != nil {
+		return "", "", err
+	}
+	info, err := os.Lstat(domainDir)
+	if err != nil {
+		return "", "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", "", errors.New("task domain must be a real directory, not a symlink")
+	}
+	taskDir, err := os.MkdirTemp(domainDir, slug+"-")
+	if err != nil {
+		return "", "", err
+	}
+	// Include the domain as well as the allocated instance name: tasks at
+	// different sites must not share the browser cleanup/session namespace.
+	sessionID := "obu-" + domain + "-" + filepath.Base(taskDir)
+	_, sessionID, err = writeTaskEnvFile(taskDir, sessionID, target)
+	if err != nil {
+		_ = os.RemoveAll(taskDir) // only the fresh directory owned by this call
+		return "", "", err
+	}
+	return taskDir, sessionID, nil
 }
 
 // taskEnvFile is the task-scoped env loaded by `obu exec` (same directory
@@ -140,8 +171,8 @@ func loadTaskEnv(basePath string) (map[string]string, error) {
 
 // writeTaskEnvFile writes/re-uses the task's .obu.env in task dir. A kept
 // existing file is never overwritten; its session id is returned so the same
-// task directory always means the same session. With time-stamped instance
-// dirs the keep path is a rare same-second collision fallback.
+// task directory always means the same session. New taskinit instances are
+// allocated atomically and never enter the reuse path.
 func writeTaskEnvFile(taskDir string, sessionID string, target taskTarget) (written bool, effectiveSession string, err error) {
 	path := filepath.Join(taskDir, taskEnvFileName)
 	if existing, err2 := parseEnvFile(path); err2 == nil && len(existing) > 0 {
@@ -165,54 +196,67 @@ func writeTaskEnvFile(taskDir string, sessionID string, target taskTarget) (writ
 // --browser/--profile win; otherwise a single connected target is adopted and
 // multiple targets produce err with every candidate's rerun command line.
 func resolveTaskTarget(socketDir string, browser string, profile string, taskCmd string) (taskTarget, error) {
-	if browser != "" && profile != "" {
-		return taskTarget{Browser: browser, Profile: profile, Label: browser + " / " + profile}, nil
+	return selectTaskTarget(probeConnectedProfiles(socketDir), browser, profile, taskCmd)
+}
+
+func selectTaskTarget(connected []connectedProfileInfo, browser, profile, taskCmd string) (taskTarget, error) {
+	if strings.ContainsFunc(browser+profile, unicode.IsControl) {
+		return taskTarget{}, errors.New("browser/profile selectors must not contain control characters")
 	}
-	connected := probeConnectedProfiles(socketDir)
-	if browser != "" {
-		var matches []connectedProfileInfo
-		for _, info := range connected {
-			if browserSelectorMatches(browser, connectedProfileInfo{
-				Browser: info.Browser, BrowserName: info.BrowserName,
-				BrowserInstance: info.BrowserInstance, Directory: info.Directory,
-			}) {
-				matches = append(matches, info)
-			}
+	var matches []connectedProfileInfo
+	for _, info := range connected {
+		if browserSelectorMatches(browser, info) && profileSelectorMatches(profile, info) {
+			matches = append(matches, info)
 		}
-		connected = matches
 	}
-	if len(connected) == 0 {
-		label := browser
-		if label == "" {
-			label = "any"
+	if len(matches) == 0 {
+		// Preserve explicit offline workspace setup, but never substitute a
+		// different live target for a partial or mismatched selector.
+		if browser != "" && profile != "" {
+			return taskTarget{Browser: browser, Profile: profile, Label: browser + " / " + profile}, nil
 		}
-		return taskTarget{}, fmt.Errorf("no connected target for browser %q — open the browser with the Open Browser Use extension, then rerun taskinit", label)
+		return taskTarget{}, fmt.Errorf("no connected target for browser %q profile %q — open the browser with the Open Browser Use extension, then rerun taskinit", browser, profile)
 	}
-	if len(connected) == 1 {
-		info := connected[0]
-		browserName := info.BrowserName
-		if browserName == "" {
-			browserName = info.Browser
-		}
-		return taskTarget{
-			Browser:   browserName,
-			Profile:   info.Directory,
-			Label:     info.label(),
-			Reachable: true,
-		}, nil
+	if len(matches) == 1 {
+		return taskTargetFromProfile(matches[0])
 	}
 	var lines []string
-	for _, info := range connected {
-		browserName := info.BrowserName
-		if browserName == "" {
-			browserName = info.Browser
+	for _, info := range matches {
+		target, err := taskTargetFromProfile(info)
+		if err != nil {
+			return taskTarget{}, err
 		}
-		lines = append(lines, fmt.Sprintf("   obu %s --browser %q --profile %q   # %s",
-			taskCmd, browserName, info.Directory, info.label()))
+		lines = append(lines, fmt.Sprintf("   obu %s --browser %s --profile %s   # %s",
+			taskCmd, quoteTaskArg(target.Browser), quoteTaskArg(target.Profile), info.label()))
 	}
 	sort.Strings(lines)
 	return taskTarget{}, fmt.Errorf("%d connected targets — ask the user which to use, then rerun with --browser/--profile:\n%s",
-		len(connected), strings.Join(lines, "\n"))
+		len(matches), strings.Join(lines, "\n"))
+}
+
+func taskTargetFromProfile(info connectedProfileInfo) (taskTarget, error) {
+	browser := info.Target // composite selector preserves BitBrowser instance
+	if browser == "" {
+		browser = info.BrowserInstance
+	}
+	if browser == "" {
+		browser = info.BrowserName
+	}
+	if browser == "" {
+		browser = info.Browser
+	}
+	profile := info.Directory
+	if profile == "" {
+		profile = info.InstanceID // unknown profile still has an exact live target
+	}
+	if profile == "" || strings.ContainsFunc(browser+profile, unicode.IsControl) {
+		return taskTarget{}, errors.New("connected target has no usable profile identity; specify --browser/--profile explicitly")
+	}
+	return taskTarget{Browser: browser, Profile: profile, Label: info.label(), Reachable: true}, nil
+}
+
+func quoteTaskArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // pingTaskTarget verifies reachability of the resolved target. Failures are
@@ -235,11 +279,11 @@ func newTaskinitCommand() *cobra.Command {
 - resolves the target: explicit --browser/--profile win; otherwise a single
   connected target is adopted, and multiple targets are listed with their
   ready-to-rerun command lines (never silently pick — ask the user).
-- creates a fresh, time-stamped instance dir <slug>-YYYYMMDD-HHMMSS under
+- creates a fresh instance dir <slug>-<unique> under
   the task root (default ~/.open-browser-use/tasks, override $OBU_TASK_DIR
   / --path); repeated runs of the same <domain>/<slug> never collide and
   the printed directory is the one to use.
-- writes .obu.env (OBU_SESSION_ID=obu-<instance>, browser, profile).
+- writes .obu.env (OBU_SESSION_ID=obu-<domain>-<instance>, browser, profile).
 - pings the target and prints the api-sheet, so the startup ritual fits in
   one round. Domain is normalized like site memory (www. dropped); slugs are
   validated against the audit scanner's reserved names.
@@ -257,39 +301,25 @@ auto-loads that instance's .obu.env) — no need to taskinit again.`,
 				root = defaultTaskRoot()
 			}
 			socketDir := host.DefaultSocketDir
-			target, err := resolveTaskTarget(socketDir, browser, profile, "taskinit "+args[0])
+			target, err := resolveTaskTarget(socketDir, browser, profile, "taskinit "+quoteTaskArg(args[0]))
 			if err != nil {
 				return err
 			}
-			instanceSlug := taskDirName(slug, time.Now())
-			taskDir := filepath.Join(root, domain, instanceSlug)
-			if err := os.MkdirAll(taskDir, 0o755); err != nil {
-				return err
-			}
-			sessionID := "obu-" + instanceSlug
-			written, effectiveSession, err := writeTaskEnvFile(taskDir, sessionID, target)
+			taskDir, sessionID, err := createTaskWorkspace(root, domain, slug, target)
 			if err != nil {
 				return err
 			}
 			writer := cmd.OutOrStdout()
-			status := "written"
-			if !written {
-				status = "kept (existing)"
-			}
-			fmt.Fprintf(writer, "✅ task: %s/%s\n", domain, instanceSlug)
-			fmt.Fprintf(writer, "   dir:     %s  (.obu.env %s)\n", taskDir, status)
-			fmt.Fprintf(writer, "   session: %s\n", effectiveSession)
-			if target.Reachable {
-				fmt.Fprintf(writer, "   target:  %s  (%s)\n", target.Label, pingTaskTarget(socketDir, target))
-			} else {
-				fmt.Fprintf(writer, "   target:  %s  (%s)\n", target.Label, pingTaskTarget(socketDir, target))
-			}
+			fmt.Fprintf(writer, "✅ task: %s/%s\n", domain, filepath.Base(taskDir))
+			fmt.Fprintf(writer, "   dir:     %s  (.obu.env written)\n", taskDir)
+			fmt.Fprintf(writer, "   session: %s\n", sessionID)
+			fmt.Fprintf(writer, "   target:  %s  (%s)\n", target.Label, pingTaskTarget(socketDir, target))
 			fmt.Fprintln(writer)
 			return renderAPISheet(writer)
 		},
 	}
-	cmd.Flags().StringVar(&browser, "browser", "", "browser selector (chrome, chrome-beta, bitbrowser, or display name)")
-	cmd.Flags().StringVar(&profile, "profile", "", "Chrome profile selector (directory name like \"Default\")")
+	cmd.Flags().StringVar(&browser, "browser", os.Getenv("OBU_BROWSER"), "browser selector (chrome, chrome-beta, bitbrowser, or display name)")
+	cmd.Flags().StringVar(&profile, "profile", os.Getenv("OBU_PROFILE"), "Chrome profile selector (directory name like \"Default\")")
 	cmd.Flags().StringVar(&taskRoot, "path", "", "task workspace root (defaults to $OBU_TASK_DIR or ~/.open-browser-use/tasks)")
 	return cmd
 }

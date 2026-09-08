@@ -5,7 +5,8 @@
 ## 默认包含的内容
 
 - `ci.yml`：仓库级检查，覆盖 docs、repo hygiene、action pinning、extension
-  打包、脚本语法、Go 测试、JS/TypeScript package 测试和 Python SDK smoke。
+  打包、脚本语法、Go 测试、JS/TypeScript package 测试、Python task helper /
+  transport 测试（`cmd/open-browser-use/*_test.py`）和 Python SDK smoke。
 - `release.yml`：tag `v*` 推送或手动触发的 release 流水线，用来打包仓库级制品、
   CLI 预编译 tarball、Chrome extension zip、内部 CRX evidence、Open Browser Use skill 包、
   生成 provenance，并创建 GitHub Release；Release 页面暴露 extension zip/CRX

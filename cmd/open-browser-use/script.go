@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -94,8 +95,13 @@ func runPipedScript(reader io.Reader, options socketOptions, stdout io.Writer, s
 // OBU_SESSION_ID (or its absence) still flows through as before, and an
 // explicit CLI flag wins over the inherited environment.
 func scriptSubprocessEnv(options socketOptions, socketPath string, socketErr error) []string {
+	timeout := options.timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
 	scriptEnv := []string{
-		fmt.Sprintf("OBU_SCRIPT_TIMEOUT_SECONDS=%d", int(options.timeout.Seconds())),
+		fmt.Sprintf("OBU_SCRIPT_TIMEOUT_SECONDS=%g", timeout.Seconds()),
+		"OBU_SCRIPT_SOCKET_ERROR=",
 	}
 	if options.sessionID != "" {
 		scriptEnv = append(scriptEnv, "OBU_SESSION_ID="+options.sessionID)
@@ -117,7 +123,7 @@ func scriptSubprocessEnv(options socketOptions, socketPath string, socketErr err
 // env (used for the task's .obu.env); values win over inherited env but
 // explicit flags still win — the caller has already folded file values into
 // options only where flags were not set.
-func runExecFile(path string, options socketOptions, extraEnv map[string]string, stdout io.Writer, stderr io.Writer) error {
+func runExecFile(path string, options socketOptions, extraEnv map[string]string, stdout io.Writer, stderr io.Writer, scriptArgs ...string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("exec requires a script file path")
 	}
@@ -144,7 +150,8 @@ func runExecFile(path string, options socketOptions, extraEnv map[string]string,
 		return err
 	}
 	socketPath, socketErr := resolveScriptSocket(options)
-	cmd := exec.Command(pythonPath, "-u", filepath.Join(tmpDir, "script_runner.py"), path)
+	args := append([]string{"-u", filepath.Join(tmpDir, "script_runner.py"), path}, scriptArgs...)
+	cmd := exec.Command(pythonPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = mergeEnvVars(append(os.Environ(),
@@ -237,14 +244,16 @@ func newExecCommand() *cobra.Command {
 	var options socketOptions
 	var envFile string
 	cmd := &cobra.Command{
-		Use:   "exec <file.py>",
+		Use:   "exec <file.py> [-- script-args...]",
 		Short: "Run a task script file with accurate tracebacks",
 		Long: `Run a Python task-script file with the obu helpers pre-imported.
 
 Unlike the heredoc path (obu <<'PY', or obu < file), the script is executed
 by its real file path: syntax and runtime errors report the file's own line
-numbers, matching what your editor shows. Helpers are the same (cdp,
-evaluate, open_tab, memory_put, ...); discover them with help(name)/_help().
+numbers, matching what your editor shows. __file__ names the script, sibling
+modules can be imported, and arguments after -- reach sys.argv. The working
+directory is unchanged. Helpers are the same (cdp, evaluate, open_tab,
+memory_put, ...); discover them with help(name)/_help().
 
 Env: the task's .obu.env (same directory as the script, written by "obu
 taskinit") is loaded unless --env-file is given or the flag overrides it.
@@ -252,7 +261,7 @@ Explicit flags beat .obu.env; .obu.env beats the inherited environment.
 
 Example:
   open-browser-use exec ~/.open-browser-use/tasks/x.com/fetch-0827/01_probe.py`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scriptPath := args[0]
 			// .obu.env: explicit --env-file wins; otherwise the same directory
@@ -291,7 +300,7 @@ Example:
 			} else if cmd.Flags().Changed("profile") {
 				delete(fileEnv, "OBU_PROFILE")
 			}
-			return runExecFile(scriptPath, options, fileEnv, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			return runExecFile(scriptPath, options, fileEnv, cmd.OutOrStdout(), cmd.ErrOrStderr(), args[1:]...)
 		},
 	}
 	addSocketFlags(cmd, &options)

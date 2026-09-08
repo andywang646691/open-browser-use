@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func requirePython3(t *testing.T) {
@@ -127,6 +128,48 @@ func TestExecRunsRealPython(t *testing.T) {
 	}
 	if strings.TrimSpace(stdout.String()) != "2" {
 		t.Fatalf("output = %q, want 2", stdout.String())
+	}
+}
+
+func TestExecBehavesLikeAPythonFile(t *testing.T) {
+	requirePython3(t)
+	path := writeTestScript(t, strings.Join([]string{
+		"import pathlib, sys",
+		"import task_local_helper",
+		"print(pathlib.Path(__file__).resolve())",
+		"print(__name__)",
+		"print(task_local_helper.VALUE)",
+		"print(sys.argv[1:])",
+		"print(pathlib.Path.cwd())",
+	}, "\n"))
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "task_local_helper.py"), []byte("VALUE = 'sibling import ok'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newExecCommand()
+	cmd.SetArgs([]string{path, "--", "--limit", "3", "two words"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("exec file semantics: %v (stderr: %s)", err, stderr.String())
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{path, "__main__", "sibling import ok", "['--limit', '3', 'two words']", cwd} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("missing %q in %s", want, stdout.String())
+		}
+	}
+}
+
+func TestScriptSubprocessEnvKeepsFractionalTimeoutAndClearsStaleError(t *testing.T) {
+	env := scriptSubprocessEnv(socketOptions{timeout: 250 * time.Millisecond}, "synthetic.sock", nil)
+	for _, want := range []string{"OBU_SCRIPT_TIMEOUT_SECONDS=0.25", "OBU_SCRIPT_SOCKET_ERROR="} {
+		if !containsEnv(env, want) {
+			t.Errorf("missing %q: %v", want, env)
+		}
 	}
 }
 

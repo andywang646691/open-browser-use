@@ -19,7 +19,8 @@ obu taskinit <domain>/<slug> [--browser X --profile Y]
 ```
 
 This creates the task workspace, selects the browser/profile, and prints the
-runtime API sheet. If multiple targets are connected, stop and ask the user
+runtime API sheet. Use the printed `<domain>/<slug>-<unique>/` directory;
+never construct its suffix yourself. If multiple targets are connected, stop and ask the user
 which target to use; never silently choose one. To continue an existing task,
 run `obu exec <file>` from its existing task directory instead of starting a
 new `taskinit` instance.
@@ -38,7 +39,8 @@ task:
 2. Read every linked
    `~/.open-browser-use/memory/techniques/<name>.md` and
    `~/.open-browser-use/memory/runbooks/<name>.py`.
-3. Run `obu api-sheet` once, then use `help(x)` for helpers whose exact
+3. Read the API sheet printed by `taskinit` (or run `obu api-sheet` once when
+   resuming), then use `help(x)` for helpers whose exact
    signature, return shape, or ordering matters. The runtime docstring is the
    source of truth, not this file.
 
@@ -54,13 +56,14 @@ contracts needed for the next action are known.
 Write every attempt as a real Python file in the task workspace and run it with:
 
 ```sh
-obu exec ~/.open-browser-use/tasks/<domain>/<slug>/02_fetch.py
+obu exec ~/.open-browser-use/tasks/<domain>/<slug>-<unique>/02_fetch.py
 ```
 
 The task workspace is the audit trail: failed attempts stay diffable and
 tracebacks retain the file's own line numbers. `obu exec` supports normal
-Python; helpers are pre-imported and accept Python arguments, so do not hand
-write JSON or shell serialization.
+Python, script-local imports and `__file__`; pass script arguments with
+`obu exec <file> -- <args...>`. Helpers are pre-imported and accept Python
+arguments, so do not hand write JSON or shell serialization.
 
 During browser work:
 
