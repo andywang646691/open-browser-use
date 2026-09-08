@@ -64,6 +64,16 @@
 本次追加验证：命名/并发/旧任务续跑/mtime 专项测试重复 20 次、`make ci`、
 `go test -race ./...` 与 `git diff --check` 均通过。
 
+### 提交、合并与收尾
+
+- 实现提交 `14f44ab`（`fix(runtime): harden script transport and task isolation`）
+  已按用户要求快进合并到 main。
+- 收尾更正文档中的“未合并”状态；确认 review worktree 干净、分支已合并后，
+  使用非强制删除清理本轮 worktree 与 `review/obu-flexibility` 分支。
+- 另一既有 `agent/sandbox` worktree / 分支保持不动。
+- 本次仅文档与 Git 工作区收尾，不再改运行时代码；不推送、不发布、不执行全局
+  安装或真实浏览器操作。新版 CLI 本地安装和真机验收仍需后续执行。
+
 ### 后续
 
 优先调查 host 慢消费者 backpressure、真实 Chrome/MV3 生命周期与低噪声关联日志；

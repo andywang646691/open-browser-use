@@ -8,7 +8,7 @@
 
 - 包含：Python 事件保留与传输超时、exec 文件语义、taskinit 路径/实例/selector、回归测试、文档同步。
 - 不包含：新 SDK 发布、snapshot/ref 引擎、站点策略、自动重试有副作用操作、Chrome 安装/重载、全局 OBU 替换。
-- 独立 worktree / 分支实现，不修改 main，不触碰其他工作区。
+- 开发阶段使用独立 worktree / 分支；完成后按用户要求提交并合并 main，不触碰其他工作区。
 
 ## 背景与证据
 
@@ -39,7 +39,8 @@
 
 ## 交付结果
 
-- 改动只在独立 worktree，main 与另一既有 worktree 不动；未发布、未全局安装、未合并。
+- 实现提交 `14f44ab` 已按用户要求快进合并到 main；本轮 review worktree / 分支在收尾时清理，另一既有 worktree 保留。
+- 未推送远端、未发布、未执行全局安装；本地使用仍需构建并确认 PATH 指向新版 CLI。
 - 未操作真实 Chrome 页面。真机 MV3/多 target/下载抓取 smoke 保留为后续验收，不把 fake socket 测试称为真实浏览器验证。
 - 本轮固定 3 个边界：同步 transport、Python 文件执行、任务隔离；没有新增产品层 helper 或外部依赖。
 - 已完成但未归档的旧 plan 和历史初稿漂移单独登记为技术债；不假定其中未知验收项已完成。
