@@ -4,7 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
-| 2026-09-08 | 任务脚本可靠性（待发布） | 可复用 Python 脚本更接近普通文件执行，多任务不会因同秒同名而共用清理范围，事件等待减少无谓丢失。 | `exec <file> -- <args...>` 支持脚本参数、正确 `__file__` 与同目录 import；taskinit 原子分配 `<slug>-<unique>` 实例（去掉冗余时间戳，旧目录不迁移）、校验 domain/slug、保留 browser instance/profile selector；事件等待只消费匹配项，读超时保留半帧、恢复原 timeout，绝对 deadline 不被通知续期；发送失败不自动重试；Python helper/transport 共 60 项测试接入 CI。原始 CDP/JSON-RPC、完整 Python、run/heredoc 均保留，旧任务无需迁移。 |
+| 2026-09-08 | 任务脚本可靠性（待发布） | 可复用 Python 脚本更接近普通文件执行，多任务不会因同秒同名而共用清理范围，事件等待减少无谓丢失。 | `exec <file> -- <args...>` 支持脚本参数、正确 `__file__` 与同目录 import，并自动以任务工作区为 Python 子进程 cwd；taskinit 原子分配 `<slug>-<unique>` 实例（去掉冗余时间戳，旧目录不迁移）、校验 domain/slug、保留 browser instance/profile selector；事件等待只消费匹配项，读超时保留半帧、恢复原 timeout，绝对 deadline 不被通知续期；发送失败不自动重试；Python helper/transport 共 60 项测试接入 CI。原始 CDP/JSON-RPC、完整 Python、run/heredoc 均保留，旧任务无需迁移。 |
 
 ## 2026-08
 

@@ -2,8 +2,8 @@
 
 The Go CLI writes this runner and the prelude into a private temporary
 folder. runpy supplies the task's __file__, __name__ and __main__ module,
-while the task directory is first on sys.path for sibling imports. The
-caller's working directory is intentionally unchanged.
+while the task directory is first on sys.path for sibling imports. The Go
+launcher sets the subprocess working directory to the task directory.
 """
 
 import os

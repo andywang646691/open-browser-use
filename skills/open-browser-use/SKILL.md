@@ -60,8 +60,10 @@ obu exec ~/.open-browser-use/tasks/<domain>/<slug>-<unique>/02_fetch.py
 ```
 
 The task workspace is the audit trail: failed attempts stay diffable and
-tracebacks retain the file's own line numbers. `obu exec` supports normal
-Python, script-local imports and `__file__`; pass script arguments with
+tracebacks retain the file's own line numbers. `obu exec` runs the Python
+subprocess with the task workspace (the script's parent directory) as its cwd;
+the caller's cwd is unchanged. It supports normal Python, script-local imports
+and `__file__`; pass script arguments with
 `obu exec <file> -- <args...>`. Helpers are pre-imported and accept Python
 arguments, so do not hand write JSON or shell serialization.
 
