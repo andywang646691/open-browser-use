@@ -175,7 +175,8 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   `sys.path` 导入并全量注入全局（含 `_SESSION_ID`/`_help` 等单下划线名，
   与 heredoc 拼接模式表面一致），再用 `runpy.run_path` 执行，`__file__`
   指向任务文件、同目录模块可 import；`exec <file> -- <args...>` 把参数
-  原样传给 `sys.argv`，不改变调用方 cwd。
+  原样传给 `sys.argv`，并自动把 Python 子进程的 cwd 切换到任务文件所在的
+  task workspace（调用方进程的 cwd 不受影响）。
   SyntaxError/RuntimeError 的 traceback 携带真实文件路径和文件内行号
   （heredoc 的 stdin 拼接会得到 `<stdin>` + prelude 偏移行号）；stdout/
   stderr 透传、python 退出码透传；`OBU_SESSION_ID` flag 显式注入子进程

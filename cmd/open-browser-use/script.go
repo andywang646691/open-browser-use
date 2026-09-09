@@ -127,12 +127,16 @@ func runExecFile(path string, options socketOptions, extraEnv map[string]string,
 	if strings.TrimSpace(path) == "" {
 		return errors.New("exec requires a script file path")
 	}
-	payload, err := os.ReadFile(path)
+	scriptPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	payload, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(string(payload)) == "" {
-		return errors.New("exec: " + path + " is empty")
+		return errors.New("exec: " + scriptPath + " is empty")
 	}
 	pythonPath, err := exec.LookPath("python3")
 	if err != nil {
@@ -150,8 +154,13 @@ func runExecFile(path string, options socketOptions, extraEnv map[string]string,
 		return err
 	}
 	socketPath, socketErr := resolveScriptSocket(options)
-	args := append([]string{"-u", filepath.Join(tmpDir, "script_runner.py"), path}, scriptArgs...)
+	args := append([]string{"-u", filepath.Join(tmpDir, "script_runner.py"), scriptPath}, scriptArgs...)
 	cmd := exec.Command(pythonPath, args...)
+	// A task workspace is the execution context for its scripts. Use an
+	// absolute target path so changing the child cwd cannot double-prefix a
+	// relative script path, and make relative file access/task-local imports
+	// resolve from the workspace rather than the caller's directory.
+	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = mergeEnvVars(append(os.Environ(),
@@ -252,8 +261,9 @@ Unlike the heredoc path (obu <<'PY', or obu < file), the script is executed
 by its real file path: syntax and runtime errors report the file's own line
 numbers, matching what your editor shows. __file__ names the script, sibling
 modules can be imported, and arguments after -- reach sys.argv. The working
-directory is unchanged. Helpers are the same (cdp, evaluate, open_tab,
-memory_put, ...); discover them with help(name)/_help().
+directory is automatically changed to the script's task workspace (its parent
+directory). Helpers are the same (cdp, evaluate, open_tab, memory_put, ...);
+discover them with help(name)/_help().
 
 Env: the task's .obu.env (same directory as the script, written by "obu
 taskinit") is loaded unless --env-file is given or the flag overrides it.

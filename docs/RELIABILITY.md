@@ -19,7 +19,8 @@ obu exec path/to/task.py -- --limit 20 "argument with spaces"
 - `__file__` 是任务文件绝对路径，`__name__ == "__main__"`；traceback 行号
   是原文件行号，同目录模块可直接 import。
 - `--` 后的参数原样传给 `sys.argv[1:]`，不会当成 OBU flag 或 shell 代码。
-- 保持调用方 cwd；读写脚本旁边的数据请用 `Path(__file__).parent`。
+- Python 子进程的 cwd 自动切换到脚本所在的 task workspace；调用方进程的 cwd
+  不受影响。脚本可直接使用相对路径读写任务目录内的数据。
 - helper 全量预导入（包括原有单下划线名称），完整 Python 语言不变。
 - stdout/stderr/退出码保持透传。`.obu.env` 仍只从脚本同目录读取，或显式
   `--env-file` 指定；session/browser/profile 的 flag 优先于文件，再优先于继承环境。

@@ -157,10 +157,40 @@ func TestExecBehavesLikeAPythonFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{path, "__main__", "sibling import ok", "['--limit', '3', 'two words']", cwd} {
+	for _, want := range []string{path, "__main__", "sibling import ok", "['--limit', '3', 'two words']", filepath.Dir(path)} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("missing %q in %s", want, stdout.String())
 		}
+	}
+	if strings.Contains(stdout.String(), cwd) && cwd != filepath.Dir(path) {
+		t.Errorf("exec should not use caller cwd %q: %s", cwd, stdout.String())
+	}
+}
+
+func TestExecUsesTaskWorkspaceAsWorkingDirectory(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "check_cwd.py")
+	if err := os.WriteFile(script, []byte("import pathlib\nprint(pathlib.Path.cwd())\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := runExecFile(script, socketOptions{}, nil, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("exec failed: %v", err)
+	}
+	expectedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != expectedDir {
+		t.Fatalf("script cwd = %q, want task workspace %q (caller cwd %q)", got, expectedDir, caller)
+	}
+	if got, err := os.Getwd(); err != nil || got != caller {
+		t.Fatalf("parent process cwd changed: got %q, err %v; want %q", got, err, caller)
 	}
 }
 
