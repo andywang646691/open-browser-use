@@ -576,7 +576,7 @@ async function run() {
     );
   }
 
-  // === Test 12: untracked initial blank of a claim-created window is ours — closed at finalize ===
+  // === Test 12: claim-created window's startup blank is removed immediately ===
   {
     const fake = createChromeFake();
     const userWindow = fake.helpers.addWindow({ focused: true, type: "normal" });
@@ -589,10 +589,12 @@ async function run() {
     const session = await backend.store.getSession("obu-claimfirst");
     const winId = session.windowId;
     const windowTabs = await fake.chrome.tabs.query({ windowId: winId });
-    const blankId = [...windowTabs].map((t) => t.id).find((id) => id !== userTab);
-    assert.ok(typeof blankId === "number", "claim-created window holds an untracked initial blank");
+    assert.deepEqual(windowTabs.map(t => t.id), [userTab], "claim leaves no startup blank");
+    assert.deepEqual(Object.keys(session.tabOrigins), [String(userTab)], "startup blank is no longer tracked");
+    const userBlank = fake.helpers.addTab({ windowId: winId, url: "about:blank" });
     const report = await backend.finalizeTabs(sessionParams("obu-claimfirst", { keep: [] }));
-    assert.deepEqual([...report.closed], [blankId], "untracked initial blank is closed as ours");
+    assert.deepEqual([...report.closed], [], "no leftover startup page needs finalize");
+    assert.ok(fake.state.tabs.has(userBlank), "never close an unrelated user blank");
     assert.deepEqual([...report.released], [userTab], "claimed user tab is released");
     assert.ok(
       !fake.state.removedWindows.includes(winId),

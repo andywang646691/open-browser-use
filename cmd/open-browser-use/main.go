@@ -1539,6 +1539,7 @@ func newOpenTabCommand() *cobra.Command {
 					"commandParams": map[string]any{"url": url},
 				})
 				if err != nil {
+					_, _ = invokeWithOptions(options, "closeUserTab", map[string]any{"tabId": tabID})
 					return err
 				}
 				output["navigate"] = navigateResponse["result"]
@@ -2456,8 +2457,10 @@ func invokeWithProfile(socketPath string, socketDir string, browser string, prof
 		return nil, err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
+	deadline := time.Now().Add(timeout)
+	_ = conn.SetDeadline(deadline)
 	applySessionDefaults(params, defaultCLISessionID)
+	params["_deadlineUnixMs"] = deadline.UnixMilli()
 	request := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "cli-1",

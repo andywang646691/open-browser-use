@@ -148,6 +148,18 @@ class PreludeTest(unittest.TestCase):
         self.assertEqual(request["params"]["session_id"], "test-session")
         self.assertTrue(request["params"]["turn_id"].startswith("test-session-"))
 
+    def test_request_includes_local_deadline_for_queue_expiry(self):
+        orig_timeout = self.sh._TIMEOUT
+        try:
+            self.sh._TIMEOUT = 0.25
+            before = int(time.time() * 1000)
+            self.sh._request("getTabs", {"_deadlineUnixMs": 1})
+            deadline = self.last("getTabs")["params"]["_deadlineUnixMs"]
+            self.assertGreaterEqual(deadline, before + 240)
+            self.assertLessEqual(deadline, int(time.time() * 1000) + 250)
+        finally:
+            self.sh._TIMEOUT = orig_timeout
+
     def test_user_tabs_returns_list(self):
         self.host.responses["getUserTabs"] = [{"id": 7, "url": "https://a"}]
         self.assertEqual(self.sh.user_tabs(), [{"id": 7, "url": "https://a"}])
@@ -220,6 +232,16 @@ class PreludeTest(unittest.TestCase):
             navigate["params"]["commandParams"], {"url": "https://example.com"}
         )
         self.assertEqual(self.sh.open_tab(""), {"id": 9, "url": ""})
+
+    def test_open_tab_cleans_up_on_navigation_failure(self):
+        self.host.responses["createTab"] = {"id": 9, "url": ""}
+        self.host.errors.add("executeCdp")
+        with self.assertRaises(RuntimeError):
+            self.sh.open_tab("https://example.com")
+        methods = [r["method"] for r in self.host.requests]
+        self.assertEqual(methods, ["createTab", "attach", "executeCdp", "closeUserTab"])
+        close_req = [r for r in self.host.requests if r["method"] == "closeUserTab"][-1]
+        self.assertEqual(close_req["params"]["tabId"], 9)
 
     def test_open_tab_window_mode_passthrough(self):
         self.host.responses["createTab"] = {"id": 9, "url": ""}

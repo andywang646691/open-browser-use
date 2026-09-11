@@ -18,6 +18,12 @@ Do not adopt another task's session ID to bypass the conflict. Ask that task to
 release, or report unresolved ownership. There is no automatic stale-lock
 recovery, lease, or force-claim API.
 
+Background readiness belongs to OBU: on CDP attachment it loads a discarded
+page in the background and wakes a resident frozen page without activating or
+reloading it. A readiness timeout stops the caller before its requested CDP
+action. The ownership stays tracked; check the release report rather than
+opening replacement tabs or assuming a socket timeout means nothing happened.
+
 At a new turn, claim again and inspect: the user or another task may have
 changed the page. Ownership spans multiple `obu exec` scripts in one browser
 turn, not the lifetime of a Python process and not the whole unfinished task.
@@ -39,6 +45,8 @@ turn, not the lifetime of a Python process and not the whole unfinished task.
   `✅ Open Browser Use` group. From an isolated task window it moves the result
   to an existing user window if available, without focusing it. Repeated marks
   converge on the same results group. Ownership is unchanged: release afterwards.
+  Do not mark a source page merely because it was read. For a research answer
+  delivered in chat, releasing the original source page is normally sufficient.
 
 A completed task:
 

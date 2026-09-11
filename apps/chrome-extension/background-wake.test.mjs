@@ -373,16 +373,16 @@ async function run() {
     assert.equal(fake.state.sentCommands.length, 2, "fresh attach sends the two wake commands");
     assert.equal(
       fake.state.sentCommands[0].method,
-      "Emulation.setFocusEmulationEnabled",
-      "focus emulation enabled"
+      "Page.setWebLifecycleState",
+      "unfreeze before renderer-dependent focus emulation"
     );
-    assert.equal(fake.state.sentCommands[0].params.enabled, true);
+    assert.equal(fake.state.sentCommands[0].params.state, "active");
     assert.equal(
       fake.state.sentCommands[1].method,
-      "Page.setWebLifecycleState",
-      "lifecycle set to active"
+      "Emulation.setFocusEmulationEnabled",
+      "focus emulation enabled after lifecycle wake"
     );
-    assert.equal(fake.state.sentCommands[1].params.state, "active");
+    assert.equal(fake.state.sentCommands[1].params.enabled, true);
     assert.equal(res.wake.focus.ok, true, "focus wake reported ok");
     assert.equal(res.wake.lifecycle.ok, true, "lifecycle wake reported ok");
   }

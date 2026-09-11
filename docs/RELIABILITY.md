@@ -62,6 +62,32 @@ obu exec path/to/task.py -- --limit 20 "argument with spaces"
 此顺序依据 [CDP Network 契约](https://chromedevtools.github.io/devtools-protocol/tot/Network/)，
 不是新的 HTTP 抓取封装，不解析或修改站点返回值。
 
+## 后台页面 readiness 与排队过期
+
+OBU 扩展负责页面生命周期，不把“请用户激活闲置标签页”当常规抓取步骤：
+
+- `attach` 先检查 tabs.get：discarded 页面没有可执行 renderer，后台 reload；
+  resident/frozen 页面保留内存状态，不刷新、不激活，不改变窗口焦点。
+- 先 CDP `Page.setWebLifecycleState(active)`，再 focus emulation。旧顺序可能
+  在 renderer-dependent focus 命令挂起，永远到不了自己的解冻步骤。
+- attach 与 wake 共用默认 6s deadline；导航重放同样有界。Chrome Promise
+  不能取消，超时后不续跑后续 wake 或用户 CDP，迟到完成后 detach。
+  未完成 cleanup 的 tab 被隔离为 pending，拒绝再次操作/释放，ownership 保留；
+  其他 tab 可继续工作。页面已经关闭时可清理 ownership。
+- Chrome 拒绝不支持的 wake 命令仍 best-effort；无响应则超时报错，不能把
+  Promise.race 宣传为 Chrome 动作已取消。无响应的底层 Promise 仍可能需要
+  Chrome 恢复/扩展重载，不能自动抢焦点或删除页面。
+- 全局 ownership queue 等待最多 2s，过期请求报错且永远不再启动。
+  CLI/Python 内部发送 `_deadlineUnixMs`（本机时钟），也拒绝本地超时后才出队的
+  请求；raw/内部 SDK 无该字段仍受队列默认时限保护。它不是已开始动作的取消协议。
+- 光标 ping/注入/发布各最多 300ms，辅助 UI 不能无限拖住 claim/create。
+
+回归覆盖 hang/late attach、生命周期顺序、discarded、过期 create、pending
+释放、MV3 旧 attachment 与其他 debugger 拒绝；`scripts/tab-readiness-smoke.py`
+用专用页面冻结后普通 evaluate 自动恢复，并验证内存标记不丢失、收尾释放。
+2026-09-11 重载扩展后此真实 Chrome smoke 已通过。discarded 重载和卡死 Chrome
+Promise 的迟到行为目前由 fake 验证，不等同于所有节能策略的真机验收。
+
 ## 任务隔离
 
 - 目录为 `<domain>/<slug>-<unique>/`，通过 MkdirTemp 原子创建及碰撞重试
@@ -83,6 +109,6 @@ obu exec path/to/task.py -- --limit 20 "argument with spaces"
 `cmd/open-browser-use/*_test.py`。后者包含 fake host 与 socketpair 的半帧、
 超时、predicate、乱序事件回归，不能替代真实 Chrome smoke。
 
-本轮复审未重载插件、操作网页或替换全局安装；真实 Chrome、MV3 重启、
+真实 Chrome 专用冻结页 smoke 已验证；MV3 pending 状态恢复、
 多客户端慢消费者与跨层日志仍需专项验收。后续事项见
 [技术债追踪](exec-plans/tech-debt-tracker.md)，流水线见 [CICD.md](CICD.md)。

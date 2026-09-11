@@ -120,6 +120,9 @@ def _request(method, params=None):
     request["params"].setdefault("turn_id", _TURN_ID)
     if _WINDOW_MODE:
         request["params"].setdefault("window_mode", _WINDOW_MODE)
+    # Local absolute deadline lets the extension reject an expired queued
+    # action before starting it. This does not cancel already-started actions.
+    request["params"]["_deadlineUnixMs"] = int((time.time() + _TIMEOUT) * 1000)
     payload = json.dumps(request).encode("utf-8")
     if len(payload) > _MAX_FRAME_BYTES:
         raise RuntimeError("obu request frame too large")
@@ -249,6 +252,8 @@ def claim_tab(tab_id):
 
     tab_id: int (or numeric string) from user_tabs().
     Returns the claimed tab object. Afterwards cdp()/evaluate() act on it.
+    OBU handles background/discarded-page readiness internally when attaching;
+    do not activate the tab or add site-specific wake/retry rituals.
 
     Example: claim_tab(user_tabs()[0]["id"]) / claim_tab("279925170")"""
     global _CURRENT_TAB
@@ -280,15 +285,22 @@ def open_tab(url="", window_mode=None):
         raise RuntimeError("createTab returned no numeric id: {!r}".format(tab))
     _CURRENT_TAB = tab_id
     if url:
-        _attach(tab_id)
-        _request(
-            "executeCdp",
-            {
-                "target": {"tabId": tab_id},
-                "method": "Page.navigate",
-                "commandParams": {"url": url},
-            },
-        )
+        try:
+            _attach(tab_id)
+            _request(
+                "executeCdp",
+                {
+                    "target": {"tabId": tab_id},
+                    "method": "Page.navigate",
+                    "commandParams": {"url": url},
+                },
+            )
+        except Exception:
+            try:
+                _request("closeUserTab", {"tabId": tab_id})
+            except Exception:
+                pass
+            raise
     return tab
 
 
@@ -643,7 +655,7 @@ def release_tabs(tab_ids=None):
 
 
 def mark_deliverable(tab_id):
-    """Organize an owned tab as a user-facing result; ownership is unchanged.
+    """Organize an owned result page (not a read-only source); ownership is unchanged.
 
     Moves it to the shared results group (out of an isolated task window when
     a user window exists), without focusing it. Release separately afterwards.

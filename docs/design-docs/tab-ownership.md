@@ -26,6 +26,9 @@ ownership 在同一 turn 的多个 exec 脚本间保留；等待用户输入和�
 ## 收尾
 
 先 mark_deliverable(result)，close_tab(自己的临时页)，最后 release_tabs()。
+只读来源页不自动视为成果：在聊天中交付调研结果时通常只需 release 原页面。
+成果移走后若任务组仍存在，先查看真实成员；禁止按组名/空白 URL 自动扫除。
+首次 claim 创建隔离窗口时立即移除本次自建启动页，不再把它留给 finalize。
 未完成页面不关闭即可，无 handoff/end_turn 状态。release-all 的 failed 和
 remaining 都为空才算成功。不得关闭用户原页，除非用户明确要求。
 
@@ -33,6 +36,9 @@ remaining 都为空才算成功。不得关闭用户原页，除非用户明确�
 claim/release/close/mark 与 attach/CDP/文件写入的关键转移在扩展内串行，防止
 异步 Chrome API 的检查与写入间出现双 claim。长事件等待不占用该队列。
 相同 session ID 的多个执行者仍需上层协调，ownership 不是本地安全沙箱。
+队列等待与 attach/readiness 有界，过期排队操作不执行；未决 Chrome attach 的
+迟到清理结束前保留该 tab ownership，不会因 timeout 让其他 session 接管。
+详见 [readiness/队列契约](../RELIABILITY.md#后台页面-readiness-与排队过期)。
 
 ## 兼容与异常
 

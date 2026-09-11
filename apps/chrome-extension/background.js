@@ -4,6 +4,10 @@ const SESSION_STATE_KEY = "OPEN_BROWSER_USE_SESSION_STATE";
 const RECONNECT_ALARM_NAME = "open-browser-use-native-reconnect";
 const HEARTBEAT_ALARM_NAME = "open-browser-use-heartbeat";
 const DEFAULT_CDP_TIMEOUT_MS = 10_000;
+// Stay below the CLI's default 10s request deadline, including queue time.
+const TAB_READINESS_TIMEOUT_MS = 6_000;
+const OWNERSHIP_QUEUE_TIMEOUT_MS = 2_000;
+const CURSOR_SETUP_TIMEOUT_MS = 300;
 const CURSOR_ARRIVAL_TIMEOUT_MS = 1_000;
 const MAX_USER_TABS = 1000;
 // Isolated-window fallback bounds, used only when the screen size cannot be
@@ -233,8 +237,14 @@ class SessionStore {
 }
 
 class BrowserBackend {
-  constructor() {
+  constructor({ readinessTimeoutMs = TAB_READINESS_TIMEOUT_MS, queueTimeoutMs = OWNERSHIP_QUEUE_TIMEOUT_MS, cursorTimeoutMs = CURSOR_SETUP_TIMEOUT_MS } = {}) {
     this.store = new SessionStore();
+    this.readinessTimeoutMs = readinessTimeoutMs;
+    this.queueTimeoutMs = queueTimeoutMs;
+    this.cursorTimeoutMs = cursorTimeoutMs;
+    // Chrome promises cannot be cancelled. A timed-out readiness operation
+    // remains quarantined until its late attach/wake has been detached.
+    this.pendingReadiness = new Map();
     this.attachedTabs = new Set();
     // Session tabs that have the CDP-level background wake applied (focus
     // emulation + lifecycle "active"), for both isolated-window and user-window
@@ -259,9 +269,27 @@ class BrowserBackend {
     for (const name of ["createTab", "claimUserTab", "releaseTabs", "markDeliverable", "closeUserTab", "finalizeTabs", "attach", "detach", "executeCdp", "setFileChooserFiles"]) {
       const operation = this[name].bind(this);
       this[name] = (params) => {
-        const result = ownershipQueue.then(() => operation(params));
-        ownershipQueue = result.catch(() => {});
-        return result;
+        let started = false;
+        let expired = false;
+        const deadline = Number.isFinite(params?._deadlineUnixMs) ? params._deadlineUnixMs : Infinity;
+        const queued = ownershipQueue.then(() => {
+          if (expired || Date.now() >= deadline) throw new Error(`${name} expired in ownership queue; no action was started`);
+          started = true;
+          clearTimeout(timer);
+          return operation(params);
+        });
+        let timer;
+        const remainingCallerDeadline = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : Infinity;
+        const maxWaitMs = Math.min(this.queueTimeoutMs, remainingCallerDeadline);
+        const expiry = new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            if (started) return;
+            expired = true;
+            reject(new Error(`${name} expired in ownership queue; no action was started`));
+          }, maxWaitMs);
+        });
+        ownershipQueue = queued.catch(() => {});
+        return Promise.race([queued, expiry]).finally(() => clearTimeout(timer));
       };
     }
     chrome.debugger.onDetach.addListener((source) => {
@@ -289,7 +317,8 @@ class BrowserBackend {
       metadata: {
         extensionId: chrome.runtime.id,
         extensionInstanceId,
-        nativeHostName: NATIVE_HOST_NAME
+        nativeHostName: NATIVE_HOST_NAME,
+        tabReadiness: "bounded-v1"
       }
     };
   }
@@ -375,9 +404,23 @@ class BrowserBackend {
   // Move an existing tab into the session's isolated window (claims) so the
   // session's tab group stays in one window.
   async moveTabIntoSessionWindow(sessionState, tab) {
-    const { win } = await this.ensureSessionWindow(sessionState);
+    const { win, created } = await this.ensureSessionWindow(sessionState);
     if (tab.windowId !== win.id) {
       await chrome.tabs.move(tab.id, { windowId: win.id, index: -1 });
+    }
+    if (created) {
+      // A claim needs the incoming page, not windows.create's startup blank.
+      // Remove only the exact tabs returned by our creation call, never pages
+      // discovered by URL/group membership (a user's blank tab is not ours).
+      for (const initial of win.tabs ?? []) {
+        if (!hasTabId(initial) || initial.id === tab.id) continue;
+        const current = await chrome.tabs.get(initial.id).catch(() => null);
+        if (current && current.url === "about:blank" && !current.pendingUrl) {
+          await chrome.tabs.remove(initial.id);
+          delete sessionState.tabOrigins[String(initial.id)];
+        }
+      }
+      await this.store.save();
     }
     return win;
   }
@@ -442,6 +485,7 @@ class BrowserBackend {
   async claimUserTab(params) {
     const session = await this.requireSession(params);
     const tabId = requireTabId(params, "claimUserTab");
+    this.requireReadinessSettled(tabId);
     const tab = await chrome.tabs.get(tabId);
     if (!hasTabId(tab)) {
       throw new Error(`Chrome tab ${tabId} has no id`);
@@ -518,6 +562,7 @@ class BrowserBackend {
         // a live attached tab retains ownership and is reported, never hidden.
         const tab = await chrome.tabs.get(tabId).catch(() => null);
         if (tab) {
+          this.requireReadinessSettled(tabId);
           // MV3 restart loses the in-memory attached set, not necessarily the
           // Chrome debugger attachment. Probe it before reporting release.
           const targets = chrome.debugger.getTargets ? await chrome.debugger.getTargets() : [];
@@ -560,6 +605,7 @@ class BrowserBackend {
       throw new Error("finalizeTabs requires keep array of {tabId: number, status: \"handoff\" | \"deliverable\"}");
     }
     const tabs = await this.getSessionTabs(session.sessionId);
+    for (const tab of tabs) this.requireReadinessSettled(tab.id);
     const knownTabIds = new Set(tabs.filter(hasTabId).map((tab) => tab.id));
     const keep = new Map();
     for (const entry of params.keep) {
@@ -719,56 +765,101 @@ class BrowserBackend {
     }
   }
 
+  requireReadinessSettled(tabId) {
+    if (this.pendingReadiness.has(tabId)) {
+      throw new Error(`Tab ${tabId} readiness is still pending in Chrome; ownership retained until cleanup settles`);
+    }
+  }
+
   async attach(params) {
     await this.requireSessionTab(params, "attach");
     const tabId = requireTabId(params, "attach");
-    let justAttached = false;
-    if (!this.attachedTabs.has(tabId)) {
+    this.requireReadinessSettled(tabId);
+    const attempt = { expired: false };
+    this.pendingReadiness.set(tabId, attempt);
+    const check = () => {
+      if (attempt.expired) throw new Error(`Tab ${tabId} readiness expired`);
+    };
+    const work = (async () => {
       try {
-        await chrome.debugger.attach({ tabId }, "1.3");
-      } catch (error) {
-        if (!String(error?.message ?? error).includes("Another debugger")) {
-          throw error;
+        const tab = await chrome.tabs.get(tabId);
+        check();
+        if (this.attachedTabs.has(tabId) && this.wokenTabIds.has(tabId) && !tab.frozen && !tab.discarded) {
+          return { wake: null };
         }
+        if (tab.discarded) {
+          // No renderer exists to wake with CDP. Reload only discarded pages;
+          // never refresh a resident page (it may contain unsaved user state).
+          await chrome.tabs.reload(tabId);
+          check();
+        }
+        if (!this.attachedTabs.has(tabId)) {
+          try {
+            await chrome.debugger.attach({ tabId }, "1.3");
+          } catch (error) {
+            if (!String(error?.message ?? error).includes("Another debugger")) throw error;
+            // After MV3 restart Chrome may still have OUR attachment. A
+            // successful command proves ownership; never adopt DevTools or
+            // another extension's debugger just from the error string.
+            check();
+            await chrome.debugger.sendCommand({ tabId }, "Page.setWebLifecycleState", { state: "active" });
+          }
+          this.attachedTabs.add(tabId);
+          check();
+        }
+        const wake = await this.applyBackgroundWake(tabId, check);
+        check();
+        this.wokenTabIds.add(tabId);
+        return { wake };
+      } finally {
+        // Do not put this cleanup back in the ownership queue: it must be
+        // able to settle even when a caller has already timed out there.
+        if (attempt.expired && this.attachedTabs.has(tabId)) {
+          await this.detachTab(tabId).catch(() => {});
+        }
+        if (this.pendingReadiness.get(tabId) === attempt) this.pendingReadiness.delete(tabId);
       }
-      this.attachedTabs.add(tabId);
-      justAttached = true;
+    })();
+    let timer;
+    try {
+      return await Promise.race([
+        work,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            attempt.expired = true;
+            reject(new Error(`Tab ${tabId} readiness timed out after ${this.readinessTimeoutMs}ms; no page action was executed`));
+          }, Number.isFinite(params._deadlineUnixMs)
+            ? Math.max(1, Math.min(this.readinessTimeoutMs, params._deadlineUnixMs - Date.now() - 100))
+            : this.readinessTimeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
-    // Background wake: session tabs report document.visibilityState ===
-    // "hidden" whenever they are not the selected, unobstructed tab — an
-    // occluded/minimized isolated window, or a non-selected background tab in
-    // the user's shared window — and Chrome throttles lazy-loading pipelines
-    // (rAF + IntersectionObserver) for hidden tabs, so scrolling a
-    // visibility-gated site never triggers new requests. There is no single
-    // CDP command that fakes visibility, but two real commands wake the page:
-    // focus emulation (document.hasFocus() -> true) and lifecycle "active"
-    // (un-throttles the renderer). Empirically the combo also flips the hidden
-    // tab's readouts to visible (verified on an occluded isolated-window tab:
-    // visibilityState -> "visible", hasFocus -> true, x.com lazy loading
-    // restored 4 -> 11 posts on scroll). Applied on the fresh attach of every
-    // session tab, re-applied on main-frame navigation, and reset by detach.
-    // Focus is never stolen.
-    if (justAttached) {
-      this.wokenTabIds.add(tabId);
-      return { wake: await this.applyBackgroundWake(tabId) };
-    }
-    return { wake: null };
   }
 
-  // Best-effort CDP background wake for one attached tab. Never throws: each
-  // command result is reported so callers/tests can observe per-command state.
-  async applyBackgroundWake(tabId) {
+  // Background rendering readiness is internal, not an agent-side ritual.
+  // Lifecycle wake + focus emulation keep occluded/hidden pages rendering,
+  // including visibility-gated lazy loading. Neither selects a tab/window.
+  // Unsupported commands remain best-effort, but a pending renderer command
+  // cannot run the next stage after its readiness deadline has expired.
+  async applyBackgroundWake(tabId, check = () => {}) {
     if (!this.attachedTabs.has(tabId)) {
       return { skipped: "not-attached" };
     }
-    const focus = await chrome.debugger
-      .sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true })
-      .then(() => ({ ok: true }))
-      .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
+    // Unfreeze BEFORE sending renderer-dependent focus commands. The old
+    // focus-first sequence could wait forever before reaching its own wake.
+    check();
     const lifecycle = await chrome.debugger
       .sendCommand({ tabId }, "Page.setWebLifecycleState", { state: "active" })
       .then(() => ({ ok: true }))
       .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
+    check();
+    const focus = await chrome.debugger
+      .sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true })
+      .then(() => ({ ok: true }))
+      .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
+    check();
     return { focus, lifecycle };
   }
 
@@ -1129,7 +1220,13 @@ class BrowserBackend {
       // Navigating resets the page lifecycle state back to hidden+throttled
       // for an occluded window; re-apply the wake on the main frame so lazy
       // loading keeps working across navigations.
-      void this.applyBackgroundWake(source.tabId);
+      // Reuse the bounded readiness path, serialized against release. Ignore
+      // failure here; the next explicit attach surfaces pending readiness.
+      const tabId = source.tabId;
+      this.wokenTabIds.delete(tabId);
+      void this.store.findTabOwner(tabId).then(owner => {
+        if (owner) return this.attach({ session_id: owner.sessionId, turn_id: "navigation-wake", tabId });
+      }).catch(() => {});
     }
   }
 
@@ -1419,6 +1516,7 @@ class BrowserBackend {
   async requireSessionTab(params, command) {
     const session = await this.requireSession(params);
     const tabId = requireTabId(params, command);
+    this.requireReadinessSettled(tabId);
     const tabs = await this.getSessionTabs(session.sessionId);
     if (!tabs.some((tab) => tab.id === tabId)) {
       throw new Error(`Tab ${tabId} is not part of browser session ${session.sessionId}`);
@@ -1537,16 +1635,17 @@ class BrowserBackend {
 
   async ensureCursorContentScript(sessionId, tabId) {
     try {
-      const response = await chrome.tabs.sendMessage(tabId, { type: "OPEN_BROWSER_USE_PING" });
+      const response = await withTimeout(this.cursorTimeoutMs, () =>
+        chrome.tabs.sendMessage(tabId, { type: "OPEN_BROWSER_USE_PING" }));
       if (response?.ok) {
         return true;
       }
     } catch {}
     try {
-      await chrome.scripting.executeScript({
+      await withTimeout(this.cursorTimeoutMs, () => chrome.scripting.executeScript({
         target: { tabId },
         files: ["content-cursor.js"]
-      });
+      }));
       return true;
     } catch {
       return false;
@@ -1558,10 +1657,10 @@ class BrowserBackend {
       return false;
     }
     try {
-      const response = await chrome.tabs.sendMessage(tabId, {
+      const response = await withTimeout(this.cursorTimeoutMs, () => chrome.tabs.sendMessage(tabId, {
         type: "OPEN_BROWSER_USE_CURSOR_STATE",
         state: this.readCursorOverlayState(tabId)
-      });
+      }));
       return response?.ok === true;
     } catch {
       return false;

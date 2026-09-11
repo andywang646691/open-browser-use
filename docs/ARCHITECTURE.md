@@ -253,6 +253,7 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   `nameSession`/`name-session` 按 `<short task> - OBU` 设置更具体的任务名；
   `markDeliverable` 将成果页移动到共享 `✅ Open Browser Use` tab group，
   但不释放控制权；随后显式 `releaseTabs`。新流程没有 handoff 状态。
+  只读来源页不等于成果页：聊天中交付调研答案通常只需 release 原页。
   legacy `finalizeTabs` 的 handoff 保留 ownership，仅作弃用兼容，不静默改义。每个 Chrome 窗口至多存在一个 `✅ Open Browser Use`
   分组：`moveToDeliverables` 按 `windowId` 调用 `chrome.tabGroups.query` 找出已有
   同名分组，合并任何重复（如 session restore 带回的旧分组）后再加入新 tab，
@@ -267,8 +268,8 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   时自动重建。窗口被遮挡/最小化时 tab 报 `document.visibilityState==="hidden"`
   （无 CDP 命令可伪造可见性），且 compositor 会对 occluded 窗口节流、挂起
   懒加载渲染管线——OBU 对隔离窗口 tab 在首次 debugger attach 时自动应用
-  CDP 层后台唤醒（`Emulation.setFocusEmulationEnabled(true)` +
-  `Page.setWebLifecycleState({state:"active"})`，best-effort、逐命令容错、
+  CDP 层后台唤醒（先 `Page.setWebLifecycleState({state:"active"})` 再
+  `Emulation.setFocusEmulationEnabled(true)`，best-effort、逐命令容错、
   detach 即复位、不抢焦点），并在主 frame `Page.frameNavigated` 时自动重放
   （导航会重置 lifecycle 为 hidden+节流）。真机 A/B 实证（2026-08-27）：
   唤醒组合不止解除渲染器节流，还会把被遮挡页面的读取翻为 visible
@@ -289,11 +290,19 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   口，随后删除替身、真实会话 tab 再归组，全程不离开隔离窗口；建组失败则
   静默退化为无组，显式 ownership 不受影响。后续 tab 因组已锚定在隔离窗口内，
   `tabs.group({groupId, ...})` 同窗口归组天然可靠。  user 模式（默认）保持原有分组方式。`claimUserTab` 把用户 tab
-  `chrome.tabs.move` 进隔离窗口再入追踪；`getUserTabs` 列出包括隔离窗口在内的
+  `chrome.tabs.move` 进隔离窗口再入追踪；首次 claim 创建窗口时立即移除本次
+  windows.create 返回的启动空白页，不再留待旧 finalize（不按 URL 删除未知页）。
+  `getUserTabs` 列出包括隔离窗口在内的
   页面并附带 `ownerSessionId`，释放后仍能发现并重新 claim。
   legacy `finalizeTabs` 无保留时关闭该窗口（仅当窗口已空，绝不连带关闭残留的
   用户 tab）；`deliverable` tab 先移到用户可见窗口再进 `✅ Open Browser
   Use` 分组，`handoff` 保留时窗口存活以便下轮继续。
+- 页面 readiness 在 extension 内处理：discarded 页后台 reload，resident/frozen
+  页不刷新、不激活；attach+wake 默认 6s 时限。pending Chrome Promise 不能取消，
+  超时后阻止续跑、保留该 tab ownership，迟到 attach/wake 后 detach；不堵塞整个
+  ownership queue。队列等待默认最多 2s，CLI/Python 另传 `_deadlineUnixMs`，
+  超期请求不得开始执行，避免客户端退出后新建幽灵空白页。导航唤醒复用相同有界
+  流程，光标辅助操作每阶段最多 300ms。详见 [RELIABILITY](RELIABILITY.md)。
 - MV3 extension event forwarding：`chrome.debugger.onEvent` 转发为
   `onCDPEvent`，`chrome.downloads` 创建/变更转发为 `onDownloadChange`，
   cursor content script 会回报 cursor arrival 以支持 `moveMouse`

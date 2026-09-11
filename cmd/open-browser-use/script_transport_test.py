@@ -134,6 +134,8 @@ class TransportTest(unittest.TestCase):
             self.sh._request("ping")
 
     def test_queue_stays_bounded(self):
+        self.sh._TIMEOUT = 1.0
+        self.peer.settimeout(2.0)
         events = [event("Network.dataReceived", index=i) for i in range(510)]
         payload = b"".join(frame(e) for e in events) + frame({"id": "obu-script-1", "result": "pong"})
         sender = threading.Thread(target=self.peer.sendall, args=(payload,))

@@ -311,6 +311,24 @@ async function run() {
     console.log("test 4 ok: per-window grouping respected");
   }
 
+  // Moving the last real member dissolves the task group. Do not invent
+  // placeholders or delete other tabs just because their URL is about:blank.
+  {
+    const { chrome, state, helpers } = createChromeFake();
+    const { SessionStore, BrowserBackend } = await loadController(bgSource, chrome);
+    const { controller, store } = makeController(SessionStore, BrowserBackend);
+    await store.ready;
+    const taskGroup = helpers.createGroup({ title: "Task - OBU" });
+    const result = helpers.createTab({ groupId: taskGroup });
+    const userBlank = helpers.createTab({ groupId: taskGroup });
+    state.tabs.get(userBlank).url = "about:blank";
+    await controller.moveToDeliverables([result]);
+    assert.deepEqual(helpers.tabsInGroup(taskGroup), [userBlank], "unrelated blank must not be deleted");
+    await controller.moveToDeliverables([userBlank]);
+    assert.equal(state.groups.has(taskGroup), false, "last member leaving dissolves task group");
+    assert.equal(state.tabs.size, 2, "no synthetic placeholder is created");
+  }
+
   console.log("\nAll moveToDeliverables tests passed.");
 }
 

@@ -81,6 +81,12 @@ guess an id.
 - Use coordinates or raw CDP only when DOM/JS access is insufficient; inspect
   the relevant helper contract first.
 
+OBU handles background-page readiness internally when attaching CDP, including
+waking frozen pages and loading discarded pages without selecting the tab.
+Do not add site-memory wake rituals, activate tabs, or create replacement tabs
+just because a page is idle. A readiness failure is an OBU/browser diagnostic,
+not a reason to replay the page action blindly.
+
 Ownership persists across `obu exec` scripts within the current browser turn;
 the local Python tab pointer resets, while the session remembers the active tab.
 At each new turn, list tabs, explicitly `claim_tab()` the requested page, and
@@ -111,8 +117,9 @@ Before writing the final response, complete this sequence exactly once:
    technique or runbook files. A checkpoint is complete only when every chosen
    artifact exists and is readable, or the no-artifact decision is explicit.
 4. **Organize and release browser state.** While still owning the pages, call
-   `mark_deliverable(id)` for user-facing results and `close_tab(id)` for your
-   unneeded temporary pages. Do not close the user's original pages unless
+   `mark_deliverable(id)` only for pages that are themselves user-facing results,
+   not original source pages merely read for a chat answer. Use `close_tab(id)`
+   for your unneeded temporary pages. Do not close the user's original pages unless
    requested. Keep unfinished pages simply by not closing them. Finally call
    `release_tabs()` with no arguments to release all current ownership, even
    when waiting for login, approval or another turn. Check `failed` and

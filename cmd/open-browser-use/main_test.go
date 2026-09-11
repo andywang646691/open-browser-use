@@ -1570,6 +1570,11 @@ func TestInvokeWithOptionsUsesSessionID(t *testing.T) {
 	if params["session_id"] != "custom-cli-session" {
 		t.Fatalf("expected custom session id, got %#v", params["session_id"])
 	}
+	deadline, ok := params["_deadlineUnixMs"].(float64)
+	remaining := time.Until(time.UnixMilli(int64(deadline)))
+	if !ok || remaining <= 0 || remaining > time.Second {
+		t.Fatalf("expected a deadline within the local timeout, got %#v", params["_deadlineUnixMs"])
+	}
 }
 
 func TestApplySessionDefaultsInjectsWindowMode(t *testing.T) {
