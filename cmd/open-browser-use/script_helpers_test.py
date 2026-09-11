@@ -409,6 +409,20 @@ class PreludeTest(unittest.TestCase):
             self.sh.evaluate("nope()")
         self.assertIn("evaluate threw", str(ctx.exception))
 
+    def test_release_and_deliverable_are_separate(self):
+        self.sh.claim_tab(3)
+        self.sh.mark_deliverable("3")
+        self.assertEqual(self.last("markDeliverable")["params"]["tabId"], 3)
+        self.assertEqual(self.sh._CURRENT_TAB, 3)
+        self.host.responses["releaseTabs"] = {"released": [3], "alreadyReleased": [], "failed": [], "remaining": []}
+        self.sh.release_tabs()
+        self.assertNotIn("tabIds", self.last("releaseTabs")["params"])
+        self.assertIsNone(self.sh._CURRENT_TAB)
+        self.sh.release_tabs([])
+        self.assertEqual(self.last("releaseTabs")["params"]["tabIds"], [])
+        self.sh.release_tabs(["3", 4])
+        self.assertEqual(self.last("releaseTabs")["params"]["tabIds"], [3, 4])
+
     def test_finalize_tabs_defaults_empty_keep(self):
         self.sh.finalize_tabs()
         request = self.last("finalizeTabs")
@@ -630,7 +644,7 @@ class PreludeTest(unittest.TestCase):
         self.assertIn("wait_for_event", {
             "user_tabs", "tabs", "claim_tab", "open_tab", "navigate",
             "history", "name_session", "cdp", "evaluate", "wait_for_event",
-            "memory_put", "close_tab", "finalize_tabs",
+            "memory_put", "close_tab", "release_tabs", "mark_deliverable",
         })
 
     def test_memory_put_accepts_subject_body_aliases(self):

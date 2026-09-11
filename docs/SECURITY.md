@@ -58,6 +58,17 @@ OBU 对所有会话 tab（包括 user 模式的后台 tab）在**首次 debugger
 唤醒只改变页面报告/执行的节流状态，不触碰用户数据，也不读取或修改
 cookie/凭据。
 
+## Tab ownership is collaboration, not authentication
+
+Tab-scoped helpers require explicit ownership; group/window placement alone no
+longer grants control. `close_tab` now requires a claim. `release_tabs` detaches
+and releases without closing or moving pages; `mark_deliverable` organizes a
+result without releasing it. A task identity may hold zero tabs between turns.
+Do not bypass another owner's conflict by adopting its session ID. No automatic
+lease/force recovery is implemented. Raw CDP/local socket access remains powerful;
+this is not a sandbox against malicious local callers. See
+[ownership contract](design-docs/tab-ownership.md).
+
 ## Local Transport
 
 The Go native host bridges Chrome Native Messaging stdio to a local Unix socket.

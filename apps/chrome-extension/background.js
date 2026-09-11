@@ -48,7 +48,8 @@ class JsonRpcPeer {
           id,
           error: {
             code: -32000,
-            message: error instanceof Error ? error.message : String(error)
+            message: error instanceof Error ? error.message : String(error),
+            ...(error?.data ? { data: error.data } : {})
           }
         });
       }
@@ -210,6 +211,16 @@ class SessionStore {
     await this.save();
   }
 
+  async findTabOwner(tabId) {
+    await this.ready;
+    for (const [sessionId, session] of Object.entries(this.state.sessions)) {
+      if (Object.hasOwn(session.tabOrigins ?? {}, String(tabId))) {
+        return { sessionId, session };
+      }
+    }
+    return null;
+  }
+
   async findSessionByGroup(groupId) {
     await this.ready;
     for (const [sessionId, session] of Object.entries(this.state.sessions)) {
@@ -242,6 +253,17 @@ class BrowserBackend {
     this.fileChoosersById = new Map();
     this.fileChooserWaitersByTabId = new Map();
     this.nextCursorMoveSequence = 1;
+    // Chrome APIs yield: serialize ownership transitions so two claimers cannot
+    // both pass the owner check. Long-running event waits are not in this queue.
+    let ownershipQueue = Promise.resolve();
+    for (const name of ["createTab", "claimUserTab", "releaseTabs", "markDeliverable", "closeUserTab", "finalizeTabs", "attach", "detach", "executeCdp", "setFileChooserFiles"]) {
+      const operation = this[name].bind(this);
+      this[name] = (params) => {
+        const result = ownershipQueue.then(() => operation(params));
+        ownershipQueue = result.catch(() => {});
+        return result;
+      };
+    }
     chrome.debugger.onDetach.addListener((source) => {
       if (typeof source.tabId === "number") {
         this.attachedTabs.delete(source.tabId);
@@ -341,6 +363,11 @@ class BrowserBackend {
       throw new Error("Created Chrome window has no id");
     }
     sessionState.windowId = win.id;
+    // Track only the initial tab we actually created, never all future tabs
+    // that happen to share this window.
+    for (const tab of win.tabs ?? []) {
+      if (hasTabId(tab)) sessionState.tabOrigins[String(tab.id)] = "agent";
+    }
     await this.store.save();
     return { win, created: true };
   }
@@ -374,18 +401,15 @@ class BrowserBackend {
 
   async getUserTabs(params) {
     await this.requireSession(params);
-    const ownedWindows = new Set();
-    for (const session of Object.values(this.store.state.sessions)) {
-      if (session && typeof session.windowId === "number") {
-        ownedWindows.add(session.windowId);
-      }
-    }
     const tabs = (await chrome.tabs.query({}))
-      .filter((tab) => hasTabId(tab) && !ownedWindows.has(tab.windowId))
+      .filter(hasTabId)
       .sort(compareLastAccessed)
       .slice(0, MAX_USER_TABS);
     const groupTitles = await readGroupTitles(tabs);
-    return tabs.map((tab) => toUserTab(tab, groupTitles));
+    return await Promise.all(tabs.map(async (tab) => {
+      const owner = await this.store.findTabOwner(tab.id);
+      return { ...toUserTab(tab, groupTitles), ownerSessionId: owner?.sessionId ?? null };
+    }));
   }
 
   async getUserHistory(params) {
@@ -425,11 +449,15 @@ class BrowserBackend {
     if (tab.url?.startsWith("chrome://")) {
       throw new Error(`Chrome internal tab ${tabId} cannot be claimed`);
     }
-    if (typeof tab.groupId === "number" && tab.groupId !== -1) {
-      const owner = await this.store.findSessionByGroup(tab.groupId);
-      if (owner && owner.sessionId !== session.sessionId) {
-        throw new Error(`Tab ${tabId} is already part of browser session ${owner.sessionId}; to resume that session set OBU_SESSION_ID=${owner.sessionId}, or finalize it from the owning agent first`);
-      }
+    const owner = await this.store.findTabOwner(tabId);
+    if (owner && owner.sessionId !== session.sessionId) {
+      const error = new Error(`Tab ${tabId} is owned by browser session ${owner.sessionId}; ask the owning task to release_tabs() before claiming. Do not share its session ID to bypass ownership.`);
+      error.data = { reason: "tab_owned", tabId, ownerSessionId: owner.sessionId };
+      throw error;
+    }
+    if (owner) {
+      await this.setSessionActiveTab(session.sessionId, tabId);
+      return { ...toBrowserTab(tab), active: true };
     }
     const sessionState = await this.store.getSession(session.sessionId);
     if (await this.sessionUsesIsolatedWindow(sessionState, params)) {
@@ -445,6 +473,87 @@ class BrowserBackend {
     return { ...toBrowserTab(tab), active: true };
   }
 
+  async forgetOwnedTab(sessionId, tabId) {
+    const state = await this.store.getSession(sessionId);
+    const previous = { ...state.tabOrigins };
+    const active = state.activeTabId;
+    delete state.tabOrigins[String(tabId)];
+    if (active === tabId) state.activeTabId = null;
+    try {
+      await this.store.save();
+    } catch (error) {
+      state.tabOrigins = previous;
+      state.activeTabId = active;
+      throw error;
+    }
+    if (this.activeTabsBySession.get(sessionId) === tabId) this.activeTabsBySession.delete(sessionId);
+    this.cursorByTabId.delete(tabId);
+    this.wokenTabIds.delete(tabId);
+    this.attachedTabs.delete(tabId);
+    this.fileChooserWaitersByTabId.get(tabId)?.reject(new Error("Tab ownership released"));
+    for (const [id, chooser] of this.fileChoosersById) {
+      if (chooser.tabId === tabId) this.fileChoosersById.delete(id);
+    }
+  }
+
+  async releaseTabs(params) {
+    const { sessionId } = await this.requireSession(params);
+    const state = await this.store.getSession(sessionId);
+    if (params.tabIds !== undefined && !Array.isArray(params.tabIds)) {
+      throw new Error("releaseTabs tabIds must be an array; omit to release all owned tabs");
+    }
+    const ids = params.tabIds === undefined
+      ? Object.keys(state.tabOrigins).map(Number)
+      : params.tabIds.map((tabId) => requireTabId({ tabId }, "releaseTabs"));
+    const report = { released: [], alreadyReleased: [], failed: [], remaining: [] };
+    for (const tabId of new Set(ids)) {
+      try {
+        const owner = await this.store.findTabOwner(tabId);
+        if (owner && owner.sessionId !== sessionId) throw new Error(`Tab ${tabId} is owned by browser session ${owner.sessionId}`);
+        if (!owner) {
+          report.alreadyReleased.push(tabId);
+          continue;
+        }
+        // An absent tab needs only stale tracking cleanup. A detach failure on
+        // a live attached tab retains ownership and is reported, never hidden.
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        if (tab) {
+          // MV3 restart loses the in-memory attached set, not necessarily the
+          // Chrome debugger attachment. Probe it before reporting release.
+          const targets = chrome.debugger.getTargets ? await chrome.debugger.getTargets() : [];
+          if (this.attachedTabs.has(tabId) || targets.some(t => t.tabId === tabId && t.attached)) {
+            await this.detachTab(tabId);
+          }
+        }
+        await this.forgetOwnedTab(sessionId, tabId);
+        report.released.push(tabId);
+      } catch (error) {
+        report.failed.push({ tabId, error: String(error?.message ?? error) });
+      }
+    }
+    report.remaining = Object.keys(state.tabOrigins).map(Number);
+    return report;
+  }
+
+  async markDeliverable(params) {
+    const { sessionId } = await this.requireSession(params);
+    await this.requireSessionTab(params, "markDeliverable");
+    const tabId = requireTabId(params, "markDeliverable");
+    const state = await this.store.getSession(sessionId);
+    const tab = await chrome.tabs.get(tabId);
+    if (typeof state.windowId === "number" && tab.windowId === state.windowId) {
+      const userWindowId = await this.chooseUserWindowId(state.windowId);
+      if (typeof userWindowId === "number") {
+        await chrome.tabs.move(tabId, { windowId: userWindowId, index: -1 });
+      }
+    }
+    await this.moveToDeliverables([tabId]);
+    // Ownership is unchanged, even though the tab is now in another group.
+    return { tabId, status: "deliverable", ownerSessionId: sessionId };
+  }
+
+  // Deprecated wire compatibility only. New callers use explicit close,
+  // markDeliverable and releaseTabs; legacy handoff semantics are unchanged.
   async finalizeTabs(params) {
     const session = await this.requireSession(params);
     if (!Array.isArray(params.keep)) {
@@ -566,6 +675,7 @@ class BrowserBackend {
     // silence: a lost session store or dissolved tab group previously degraded
     // to an empty no-op that still looked like success.
     const report = {
+      deprecated: "finalizeTabs is deprecated; use markDeliverable, closeUserTab and releaseTabs. Legacy handoff retains ownership.",
       closed: agentTabsToClose,
       released: userTabsToRelease,
       kept: [
@@ -582,7 +692,8 @@ class BrowserBackend {
   }
 
   async closeUserTab(params) {
-    await this.requireSession(params);
+    const session = await this.requireSession(params);
+    await this.requireSessionTab(params, "closeUserTab");
     const tabId = requireTabId(params, "closeUserTab");
     const tab = await chrome.tabs.get(tabId);
     if (!hasTabId(tab)) {
@@ -591,8 +702,9 @@ class BrowserBackend {
     if (tab.url?.startsWith("chrome://")) {
       throw new Error(`Chrome internal tab ${tabId} cannot be closed`);
     }
+    if (this.attachedTabs.has(tabId)) await this.detachTab(tabId);
     await chrome.tabs.remove(tabId);
-    this.cursorByTabId.delete(tabId);
+    await this.forgetOwnedTab(session.sessionId, tabId);
     return { closed: tabId };
   }
 
@@ -1027,6 +1139,10 @@ class BrowserBackend {
     }
     return new Promise((resolve, reject) => {
       this.fileChooserWaitersByTabId.set(tabId, {
+        reject: (error) => {
+          this.fileChooserWaitersByTabId.delete(tabId);
+          reject(error);
+        },
         resolve: (event) => {
           this.fileChooserWaitersByTabId.delete(tabId);
           if (!Number.isInteger(event.backendNodeId)) {
@@ -1147,22 +1263,29 @@ class BrowserBackend {
   async ensureSessionGroup(sessionId, tabId, origin) {
     const session = await this.store.getSession(sessionId);
     session.tabOrigins[String(tabId)] = origin;
+    await this.store.save();
     if (typeof session.windowId === "number") {
-      // Isolated window: membership is the owned window itself, and we try to
-      // ALSO keep a tab group inside it for visual organization. New groups are
+      // Isolated window: tabOrigins records ownership; keep a tab group only
+      // for visual organization. New groups are
       // risky here: chrome.tabs.group pins a new group to the *current*
       // (focused) window and drags the tab there (createProperties.windowId is
       // ignored on some Chrome builds), which would pull a real session tab
       // into the user's window and let Chrome auto-close the emptied background
       // window. So group establishment uses a sacrificial scaffold tab and
       // repairs with tabGroups.move() — a real session tab never leaves the
-      // owned window. If grouping is unavailable, fall back to window-based
-      // membership (no group).
+      // owned window. If grouping is unavailable, explicit ownership still
+      // works without a group.
       await this.ensureSessionGroupInWindow(session, session.windowId, tabId);
       await this.store.save();
       return;
     }
     let groupId = session.chromeGroupId;
+    // A retained group can contain released pages. Do not reuse/rename such a
+    // group when another task has since claimed one of those pages.
+    if (typeof groupId === "number") {
+      const grouped = await chrome.tabs.query({ groupId }).catch(() => []);
+      if (grouped.some(tab => !Object.hasOwn(session.tabOrigins, String(tab.id)))) groupId = null;
+    }
     if (typeof groupId === "number") {
       try {
         await chrome.tabGroups.get(groupId);
@@ -1189,8 +1312,12 @@ class BrowserBackend {
   // absorbs any wrong-window placement, the group is repaired with
   // tabGroups.move(), the REAL tab joins while the scaffold still anchors the
   // group (Chrome drops empty groups when their last member leaves), and only
-  // then is the scaffold removed. Failures degrade to window-based membership.
+  // then is the scaffold removed. Failures leave explicit ownership intact.
   async ensureSessionGroupInWindow(session, winId, tabId) {
+    if (typeof session.chromeGroupId === "number") {
+      const grouped = await chrome.tabs.query({ groupId: session.chromeGroupId }).catch(() => []);
+      if (grouped.some(tab => !Object.hasOwn(session.tabOrigins, String(tab.id)))) session.chromeGroupId = null;
+    }
     if (typeof session.chromeGroupId === "number") {
       try {
         const group = await chrome.tabGroups.get(session.chromeGroupId);
@@ -1266,43 +1393,13 @@ class BrowserBackend {
 
   async getSessionTabs(sessionId) {
     const session = await this.store.getSession(sessionId);
-    if (typeof session.windowId === "number") {
-      // Isolated sessions track membership by owned window (no tab group).
-      // Union with surviving tabOrigins entries: an explicit window_mode="user"
-      // tab inside an isolated session lives in the user's window and must
-      // still be visible to finalize so it gets closed with the session.
-      try {
-        const windowTabs = (await chrome.tabs.query({ windowId: session.windowId })).filter(
-          (tab) => hasTabId(tab) && !tab.url?.startsWith("chrome://")
-        );
-        const extras = [];
-        for (const raw of Object.keys(session.tabOrigins)) {
-          const id = Number(raw);
-          if (!Number.isInteger(id) || windowTabs.some((tab) => tab.id === id)) {
-            continue;
-          }
-          const tab = await chrome.tabs.get(id).catch(() => null);
-          if (tab && hasTabId(tab) && !tab.url?.startsWith("chrome://")) {
-            extras.push(tab);
-          }
-        }
-        return [...windowTabs, ...extras];
-      } catch {
-        await this.store.removeSession(sessionId);
-        return [];
-      }
-    }
-    if (typeof session.chromeGroupId !== "number") {
-      return [];
-    }
-    try {
-      return (await chrome.tabs.query({ groupId: session.chromeGroupId })).filter(
-        (tab) => hasTabId(tab) && !tab.url?.startsWith("chrome://")
-      );
-    } catch {
-      await this.store.removeSession(sessionId);
-      return [];
-    }
+    // tabOrigins is the explicit ownership ledger. Groups/windows only arrange
+    // pages; moving, releasing or manually ungrouping a page cannot grant it.
+    const tabs = await Promise.all(Object.keys(session.tabOrigins ?? {}).map(async (raw) => {
+      const tab = await chrome.tabs.get(Number(raw)).catch(() => null);
+      return tab && hasTabId(tab) && !tab.url?.startsWith("chrome://") ? tab : null;
+    }));
+    return tabs.filter(Boolean);
   }
 
   async requireSession(params) {
@@ -1425,10 +1522,10 @@ class BrowserBackend {
   }
 
   async detachTab(tabId) {
-    try {
-      await chrome.debugger.detach({ tabId });
-    } finally {
+    await chrome.debugger.detach({ tabId });
+    {
       this.attachedTabs.delete(tabId);
+      this.wokenTabIds.delete(tabId);
       for (const [fileChooserId, chooser] of this.fileChoosersById) {
         if (chooser.tabId === tabId) {
           this.fileChoosersById.delete(fileChooserId);

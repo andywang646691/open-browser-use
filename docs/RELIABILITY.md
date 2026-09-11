@@ -2,7 +2,10 @@
 
 ## 公开运行路径与灵活性边界
 
-当前 Agent 主路径为 `taskinit → exec → finalize_tabs`。CLI 便捷命令、
+当前 Agent 主路径为 `taskinit → exec（claim/操作/标记成果/关闭临时页）→ release_tabs`。
+后续 turn 复用原 workspace，但重新 claim 并观察。release 只归还控制权，
+不关闭页面；检查 failed/remaining，部分清理失败必须报告。旧 finalize_tabs
+仅为弃用兼容，handoff 不会释放。详见 [ownership 契约](design-docs/tab-ownership.md)。CLI 便捷命令、
 `run`、heredoc、任意 JSON-RPC `call` 与原始 `cdp()` 均保留；没有新增
 站点 allowlist、DOM DSL、自动点击/重试或强制任务编排器。
 

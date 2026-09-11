@@ -150,7 +150,7 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   CLI action，保留同一个 session/turn，并让 `open-tab`/`claim-tab` 设置默认
   tab，供后续 `wait-load`、`page-info`、`navigate`、`cdp` 等 tab-scoped action
   复用；默认和普通 CLI 子命令使用同一个 `obu-cli` browser session，因此
-  一次 `finalize-tabs` 可以清理两种调用方式打开的 tabs；需要隔离 tab group
+  一次 `release-tabs` 可以释放两种调用方式持有的 tabs（不关闭页面）；需要隔离 tab group
   和清理范围时可以显式传 `--session-id`。它不是通用编程语言，适合 shell、
   CI 和轻量 agent 编排。
 - 无参数运行 `obu` 且 stdin 为管道输入（如 `obu <<'PY' ... PY` heredoc）时
@@ -159,7 +159,7 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   源码；helper 预导入（`user_tabs()`、`tabs()`、`claim_tab(id)`、
   `open_tab(url)`、`navigate(tab_id, url)`、`history(query)`、
   `name_session(name)`、`cdp("Domain.method", **kwargs)`、`evaluate(js)`、
-  `finalize_tabs(keep=[...])`），完整 Python 语言可用（if/for、列表推导、
+  `release_tabs()`、`mark_deliverable(id)`、`close_tab(id)`），完整 Python 语言可用（if/for、列表推导、
   f-string）；API 契约写在 helper docstring 中，脚本内
   `help(name)`/`_help()` 可随时自省签名与返回结构；CDP 参数以结构化
   kwargs 传入，由 Python runtime 编码，模型不写 JSON/shell 转义；
@@ -167,7 +167,7 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   `--socket`/registry/profile 路由解析后经 `OBU_SCRIPT_SOCKET` 传给
   prelude，prelude 直接用标准库走 Browser Use JSON-RPC frame 协议。
   `open_tab`/`claim_tab` 设置当前 tab，供后续 `cdp`/`evaluate`
-  复用；`finalize_tabs()` 缺省 keep 为空列表。
+  复用；每轮结束用 `release_tabs()` 释放控制权，下轮重新 claim 并观察。
 - `obu exec <file.py>`：以文件路径执行任务脚本（对应任务工作区
   脚本）。Go CLI 复用同一 socket 解析，把 go:embed 的 prelude
   （`script_helpers.py`）与 runner（`script_runner.py`）写入临时目录，
@@ -193,7 +193,7 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   MCP 指引。
 - CLI 便捷子命令覆盖当前核心能力：`ping`、`info`、`tabs`、
   `user-tabs`、`history`、`open-tab`、`navigate`、`claim-tab`、
-  `finalize-tabs`、`name-session`、`cdp`、`move-mouse`、
+  `release-tabs`、`mark-deliverable`、`finalize-tabs`（弃用兼容）、`name-session`、`cdp`、`move-mouse`、
   `wait-file-chooser`、`set-file-chooser-files`、`turn-ended`、`profiles`、
   `taskinit`、`api-sheet`、`exec`、`tasksizes`。
 - 任务启动仪式一条龙：`obu taskinit <domain>/<slug>` 探测并选定
@@ -241,7 +241,7 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   `active.json` 快速路径；`active.json` 缺失或失效时，CLI 会扫描 socket 目录并
   修复 registry，因此不需要重装扩展。
 - MV3 extension core handlers：`getInfo`、`createTab`、`getTabs`、
-  `getUserTabs`、`getUserHistory`、`claimUserTab`、`finalizeTabs`、
+  `getUserTabs`、`getUserHistory`、`claimUserTab`、`releaseTabs`、`markDeliverable`、`closeUserTab`、`finalizeTabs`（弃用兼容）、
   `nameSession`、`attach`、`detach`、`executeCdp`、`moveMouse`、
   `waitForFileChooser`、`setFileChooserFiles`、`waitForDownload`、
   `downloadPath`、`readClipboardText`、`writeClipboardText`、
@@ -251,13 +251,15 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   MV3 service worker restarts can recover session tab listing semantics.
   新 session 的默认任务组名是 `Task - OBU`，上层 runtime 应通过
   `nameSession`/`name-session` 按 `<short task> - OBU` 设置更具体的任务名；
-  `deliverable` tabs 统一移动到共享 `✅ Open Browser Use` tab group，`handoff`
-  tabs 保留在当前任务组。每个 Chrome 窗口至多存在一个 `✅ Open Browser Use`
+  `markDeliverable` 将成果页移动到共享 `✅ Open Browser Use` tab group，
+  但不释放控制权；随后显式 `releaseTabs`。新流程没有 handoff 状态。
+  legacy `finalizeTabs` 的 handoff 保留 ownership，仅作弃用兼容，不静默改义。每个 Chrome 窗口至多存在一个 `✅ Open Browser Use`
   分组：`moveToDeliverables` 按 `windowId` 调用 `chrome.tabGroups.query` 找出已有
   同名分组，合并任何重复（如 session restore 带回的旧分组）后再加入新 tab，
   仅在该窗口完全没有同名分组时才新建。
-  `turnEnded` and `finalizeTabs` clear active session state when control ends
-  so download notifications only fire while a browser session is active.
+  `releaseTabs` 清除对应 active tab、debugger 和控制权，但保留 session 元信息
+  及页面位置；全部释放后不再视为 active browser control。legacy `turnEnded`
+  不能代替 release。详见 [Tab ownership 契约](design-docs/tab-ownership.md)。
 - 隔离窗口模型：显式 `window_mode="isolated"` 的 session 标签页落进专属后台 Chrome 窗口
   （`chrome.windows.create`：`focused:false`、tabs `active:false`、非最小化、
   正常尺寸近全屏居中定位（小视口会让 SPA 虚拟列表只装少量条目）），全程不抢焦点、不打扰用户现有窗口；`session.windowId`
@@ -278,18 +280,18 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   `window_mode` 参数（`OBU_WINDOW_MODE` 环境变量，`open-tab
   --window-mode` flag）决定是否隔离：缺省/`user` 即用户聚焦窗口（默认，共享
   窗口模式），`isolated` 显式进入专用后台窗口（不抢焦点、不打扰用户）。一旦
-  session 建立了隔离窗口就永久隔离。**隔离会话的成员关系以“归属窗口”追踪**（`tabs.query({windowId})` +
-  `tabOrigins`），同时仍会在隔离窗口内建立 tab group 做可视化组织：
+  session 建立了隔离窗口就保留其布局偏好。**ownership 仅以显式 `tabOrigins`
+  记录追踪**，窗口或分组不隐式授予控制权；隔离窗口仍建立 tab group 做可视化组织：
   `chrome.tabs.group` 会把新组钉在*当前*（聚焦）窗口并把 tab 拽
   过去（`createProperties.windowId` 在部分 Chrome 构建上被无视），因此建组用
   “替身 tab + 修复”流程：先让一个临时 about:blank 替身去踩建组路径，组若
   落到错误窗口就用 `tabGroups.move(groupId, {windowId})` 把整组搬回隔离窗
   口，随后删除替身、真实会话 tab 再归组，全程不离开隔离窗口；建组失败则
-  静默退化为“无组、窗口式追踪”。后续 tab 因组已锚定在隔离窗口内，
+  静默退化为无组，显式 ownership 不受影响。后续 tab 因组已锚定在隔离窗口内，
   `tabs.group({groupId, ...})` 同窗口归组天然可靠。  user 模式（默认）保持原有分组方式。`claimUserTab` 把用户 tab
-  `chrome.tabs.move` 进隔离窗口再入追踪；`getUserTabs` 排除所有 session
-  自有窗口内的 tab，防止 agent 把自己的工作页当用户 tab 再 claim。
-  `finalizeTabs` 无保留时关闭该窗口（仅当窗口已空，绝不连带关闭残留的
+  `chrome.tabs.move` 进隔离窗口再入追踪；`getUserTabs` 列出包括隔离窗口在内的
+  页面并附带 `ownerSessionId`，释放后仍能发现并重新 claim。
+  legacy `finalizeTabs` 无保留时关闭该窗口（仅当窗口已空，绝不连带关闭残留的
   用户 tab）；`deliverable` tab 先移到用户可见窗口再进 `✅ Open Browser
   Use` 分组，`handoff` 保留时窗口存活以便下轮继续。
 - MV3 extension event forwarding：`chrome.debugger.onEvent` 转发为

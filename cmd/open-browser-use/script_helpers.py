@@ -202,7 +202,7 @@ def _ensure_current_tab():
     considered — user_tabs() is never touched here.
 
     Raises RuntimeError only when there is genuinely nothing to work on:
-    the session has no tabs (e.g. finalize_tabs() already closed them), or
+    the session has no tabs (e.g. release_tabs() already released them), or
     the session reports no single active tab.
     """
     global _CURRENT_TAB
@@ -215,7 +215,7 @@ def _ensure_current_tab():
         return _CURRENT_TAB
     if not session_tabs:
         raise RuntimeError(
-            "no current tab: this session has no tabs (finalize_tabs() may have "
+            "no current tab: this session has no tabs (release_tabs() may have "
             "closed them); call open_tab(url) or claim_tab(id) first"
         )
     raise RuntimeError(
@@ -626,8 +626,35 @@ def wait_for_event(method, predicate=None, timeout=30.0):
     )
 
 
+def release_tabs(tab_ids=None):
+    """Release ownership without closing or moving pages; omit ids for all owned tabs.
+
+    Returns {released, alreadyReleased, failed, remaining}. Check failed before
+    reporting cleanup complete. [] releases nothing. Other owners are never
+    released. Call at the end of each browser turn; re-claim and inspect next
+    turn. This does not end or delete the task workspace.
+    """
+    global _CURRENT_TAB
+    params = {} if tab_ids is None else {"tabIds": [_coerce_tab_id(x, "release_tabs") for x in tab_ids]}
+    result = _request("releaseTabs", params)
+    if _CURRENT_TAB in result.get("released", []) + result.get("alreadyReleased", []):
+        _CURRENT_TAB = None
+    return result
+
+
+def mark_deliverable(tab_id):
+    """Organize an owned tab as a user-facing result; ownership is unchanged.
+
+    Moves it to the shared results group (out of an isolated task window when
+    a user window exists), without focusing it. Release separately afterwards.
+    """
+    return _request("markDeliverable", {"tabId": _coerce_tab_id(tab_id, "mark_deliverable")})
+
+
 def finalize_tabs(keep=None):
-    """Close the session's non-kept tabs. Call exactly once as the last step.
+    """Deprecated compatibility API; use mark_deliverable/close_tab/release_tabs.
+
+    Legacy handoff still retains ownership; no silent contract migration.
 
     keep: list of {"tabId": int, "status": "deliverable"|"handoff"} tabs to
     keep open; defaults to [] (close everything). Keep a tab only when the
@@ -641,19 +668,24 @@ def finalize_tabs(keep=None):
 
     Example: finalize_tabs()  # close all
     Example: finalize_tabs(keep=[{"tabId": 123, "status": "deliverable"}])"""
+    import warnings
+    warnings.warn("finalize_tabs is deprecated; use mark_deliverable, close_tab and release_tabs; legacy handoff retains ownership", FutureWarning, stacklevel=2)
     return _request("finalizeTabs", {"keep": list(keep or [])})
 
 
 def close_tab(tab_id):
-    """Close any real Chrome tab by id — cleanup fallback when finalize_tabs()
-    reports a warning or a stray tab survives.
+    """Close a tab owned by this task and clear its tracking. Claim first.
 
     tab_id: int (or numeric string) from user_tabs(). Never guess ids.
-    Returns {"closed": tab_id}. chrome:// pages are refused.
+    Returns {"closed": tab_id}. Unowned/other-owned and chrome:// pages are refused.
 
     Example: close_tab(user_tabs()[0]["id"])"""
+    global _CURRENT_TAB
     tab_id = _coerce_tab_id(tab_id, "close_tab")
-    return _request("closeUserTab", {"tabId": tab_id})
+    result = _request("closeUserTab", {"tabId": tab_id})
+    if _CURRENT_TAB == tab_id:
+        _CURRENT_TAB = None
+    return result
 
 
 def memory_put(domain, kind, note=None, unlock=None, selector=None, tech=None, runbook=None,
@@ -756,7 +788,8 @@ _HELPER_NAMES = [
     "wait_for_event",
     "memory_put",
     "close_tab",
-    "finalize_tabs",
+    "release_tabs",
+    "mark_deliverable",
 ]
 
 

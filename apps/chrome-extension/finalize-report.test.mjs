@@ -218,18 +218,20 @@ async function run() {
     const Backend = await loadBackground(bgSource, fake.chrome);
     const backend = new Backend();
 
+    await assert.rejects(() => backend.closeUserTab({ session_id: "obu-task", turn_id: "t1", tabId: target }), /not part/);
+    await backend.claimUserTab({ session_id: "obu-task", turn_id: "t1", tabId: target });
     const result = await backend.closeUserTab({ session_id: "obu-task", turn_id: "t1", tabId: target });
     assert.equal(result.closed, target, "returns the closed tab id");
     assert.ok(!fake.state.tabs.has(target), "tab was really removed");
 
     await assert.rejects(
       () => backend.closeUserTab({ session_id: "obu-task", turn_id: "t1", tabId: internal }),
-      /cannot be closed/,
+      /not part/,
       "chrome:// pages are refused"
     );
     await assert.rejects(
       () => backend.closeUserTab({ session_id: "obu-task", turn_id: "t1", tabId: 999999 }),
-      /No tab with id/,
+      /not part/,
       "unknown tab ids error instead of pretending"
     );
   }

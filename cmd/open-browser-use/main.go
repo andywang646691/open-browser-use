@@ -120,6 +120,8 @@ func newRootCommand() *cobra.Command {
 		newHistoryCommand(),
 		newClaimTabCommand(),
 		newFinalizeTabsCommand(),
+		newReleaseTabsCommand(),
+		newMarkDeliverableCommand(),
 		newNameSessionCommand(),
 		newCdpCommand(),
 		newMoveMouseCommand(),
@@ -1205,7 +1207,7 @@ Example:
   open-tab https://docs.browser-use.com
   wait-load domcontentloaded
   page-info
-  finalize-tabs []
+  release-tabs
   '`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -1299,13 +1301,66 @@ func newClaimTabCommand() *cobra.Command {
 	return cmd
 }
 
+func newReleaseTabsCommand() *cobra.Command {
+	var options socketOptions
+	var ids []int
+	cmd := &cobra.Command{
+		Use: "release-tabs", Short: "Release tab ownership without closing or moving pages", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			params := map[string]any{}
+			if cmd.Flags().Changed("tab-id") {
+				for _, id := range ids {
+					if id <= 0 {
+						return errors.New("tab ids must be positive")
+					}
+				}
+				params["tabIds"] = ids
+			}
+			response, err := invokeWithOptions(options, "releaseTabs", params)
+			if err != nil {
+				return err
+			}
+			if err := writeJSON(response); err != nil {
+				return err
+			}
+			if result, ok := response["result"].(map[string]any); ok {
+				if failed, ok := result["failed"].([]any); ok && len(failed) > 0 {
+					return errors.New("tab release partially failed; inspect failed/remaining in the report")
+				}
+			}
+			return nil
+		},
+	}
+	addSocketFlags(cmd, &options)
+	cmd.Flags().IntSliceVar(&ids, "tab-id", nil, "tab ids to release; omit for all owned tabs")
+	return cmd
+}
+
+func newMarkDeliverableCommand() *cobra.Command {
+	var options socketOptions
+	var id int
+	cmd := &cobra.Command{
+		Use: "mark-deliverable", Short: "Organize an owned tab as a result without releasing it", Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if id <= 0 {
+				return errors.New("mark-deliverable requires --tab-id")
+			}
+			return invokeAndWrite(options, "markDeliverable", map[string]any{"tabId": id})
+		},
+	}
+	addSocketFlags(cmd, &options)
+	cmd.Flags().IntVar(&id, "tab-id", 0, "owned tab id")
+	return cmd
+}
+
 func newFinalizeTabsCommand() *cobra.Command {
 	var options socketOptions
 	var keepJSON string
 	cmd := &cobra.Command{
-		Use:   "finalize-tabs",
-		Short: "Finalize session tabs",
-		Args:  cobra.NoArgs,
+		Use:        "finalize-tabs",
+		Short:      "Finalize session tabs (legacy)",
+		Deprecated: "use mark-deliverable, close owned tabs and release-tabs; legacy handoff retains ownership",
+		Args:       cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			var keep []any
 			if err := json.Unmarshal([]byte(keepJSON), &keep); err != nil {
@@ -1922,6 +1977,34 @@ func (runner *actionRunner) runAction(action string, args []string) (map[string]
 		return runner.runWaitFileChooserAction(args)
 	case "set-file-chooser-files":
 		return runner.runSetFileChooserFilesAction(args)
+	case "release-tabs":
+		params := map[string]any{}
+		if len(args) > 0 {
+			id, err := firstIntArg(args, "--tab-id")
+			if err != nil {
+				return nil, 0, err
+			}
+			params["tabIds"] = []int{id}
+		}
+		response, id, err := runner.invoke("releaseTabs", params)
+		if err == nil {
+			runner.currentTabID = 0
+		}
+		return response, id, err
+	case "mark-deliverable", "close-tab":
+		id, err := firstIntArg(args, "--tab-id")
+		if err != nil {
+			return nil, 0, err
+		}
+		method := "markDeliverable"
+		if action == "close-tab" {
+			method = "closeUserTab"
+		}
+		response, _, err := runner.invoke(method, map[string]any{"tabId": id})
+		if err == nil && action == "close-tab" && runner.currentTabID == id {
+			runner.currentTabID = 0
+		}
+		return response, id, err
 	case "finalize-tabs":
 		return runner.runFinalizeTabsAction(args)
 	case "call":

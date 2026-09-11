@@ -438,7 +438,8 @@ async function run() {
     const tabs = await backend.getUserTabs(sessionParams());
     const ids = [...tabs].map((t) => t.id);
     assert.ok(ids.includes(userTab), "real user tab still listed");
-    assert.ok(!ids.includes(created.id), "session-owned tab not listed as a user tab");
+    assert.ok(ids.includes(created.id), "all real pages remain discoverable");
+    assert.equal(tabs.find((t) => t.id === created.id).ownerSessionId, "obu-test");
   }
 
   // === Test 5: finalize closes the owned window only when it is empty ===
@@ -597,6 +598,74 @@ async function run() {
       !fake.state.removedWindows.includes(winId),
       "window kept because the released user tab still lives in it"
     );
+  }
+
+  // Explicit ownership survives grouping changes, but release does not move
+  // pages and never grants the old window owner access to them again.
+  {
+    const fake = createChromeFake();
+    const userWindow = fake.helpers.addWindow({ focused: true, type: "normal" });
+    const Backend = await loadBackground(bgSource, fake.chrome);
+    const backend = new Backend();
+    const p = (id, extra = {}) => sessionParams(id, extra);
+    const a = await backend.createTab(p("a", { window_mode: "isolated" }));
+    const original = { ...fake.state.tabs.get(a.id) };
+    const unrelated = fake.helpers.addTab({ windowId: original.windowId, url: "https://example.test/user" });
+    assert.ok(!(await backend.getTabs(p("a"))).some(t => t.id === unrelated));
+    const released = await backend.releaseTabs(p("a"));
+    assert.deepEqual([...released.released], [a.id]);
+    assert.equal(released.failed.length, 0);
+    assert.equal(fake.state.tabs.get(a.id).windowId, original.windowId);
+    assert.equal(fake.state.tabs.get(a.id).groupId, original.groupId);
+    assert.equal((await backend.getTabs(p("a"))).length, 0);
+    await assert.rejects(() => backend.attach(p("a", { tabId: a.id })), /not part/);
+    await backend.claimUserTab(p("b", { tabId: a.id }));
+    const denied = await backend.releaseTabs(p("a", { tabIds: [a.id] }));
+    assert.equal(denied.failed.length, 1);
+    await assert.rejects(() => backend.closeUserTab(p("a", { tabId: a.id })), /not part/);
+    await backend.markDeliverable(p("b", { tabId: a.id }));
+    assert.equal((await backend.store.findTabOwner(a.id)).sessionId, "b");
+    assert.equal((await backend.getTabs(p("b"))).length, 1);
+    await backend.releaseTabs(p("b"));
+    const again = await backend.releaseTabs(p("b", { tabIds: [a.id] }));
+    assert.deepEqual([...again.alreadyReleased], [a.id]);
+    assert.ok(fake.state.tabs.has(unrelated));
+
+    // Reload persisted ownership, then race two different claimers.
+    const restarted = new Backend();
+    await restarted.store.ready;
+    const race = await Promise.allSettled([
+      restarted.claimUserTab(p("c", { tabId: a.id })),
+      restarted.claimUserTab(p("d", { tabId: a.id }))
+    ]);
+    assert.equal(race.filter(r => r.status === "fulfilled").length, 1);
+    assert.equal(race.filter(r => r.status === "rejected").length, 1);
+    const owner = (await restarted.store.findTabOwner(a.id)).sessionId;
+    restarted.attachedTabs.add(a.id);
+    const detach = fake.chrome.debugger.detach;
+    fake.chrome.debugger.detach = async () => { throw new Error("detach failed"); };
+    const failed = await restarted.releaseTabs(p(owner));
+    assert.equal(failed.failed.length, 1);
+    assert.deepEqual([...failed.remaining], [a.id]);
+    fake.chrome.debugger.detach = detach;
+    const save = restarted.store.save.bind(restarted.store);
+    restarted.store.save = async () => { throw new Error("storage failed"); };
+    const storageFailed = await restarted.releaseTabs(p(owner));
+    assert.equal(storageFailed.failed.length, 1);
+    assert.equal((await restarted.store.findTabOwner(a.id)).sessionId, owner);
+    restarted.store.save = save;
+    await restarted.releaseTabs(p(owner));
+    assert.equal(await restarted.store.findTabOwner(a.id), null);
+
+    const result = await restarted.createTab(p("result", { window_mode: "isolated" }));
+    await restarted.markDeliverable(p("result", { tabId: result.id }));
+    assert.equal(fake.state.tabs.get(result.id).windowId, userWindow);
+    assert.equal((await restarted.store.findTabOwner(result.id)).sessionId, "result");
+    await restarted.markDeliverable(p("result", { tabId: result.id }));
+    await fake.chrome.tabs.remove(result.id);
+    const gone = await restarted.releaseTabs(p("result"));
+    assert.deepEqual([...gone.released], [result.id]);
+    assert.equal(gone.remaining.length, 0);
   }
 
   console.log("isolated-window tests passed");

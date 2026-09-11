@@ -303,7 +303,8 @@ func TestApiSheetListsAllHelpers(t *testing.T) {
 	for _, want := range []string{
 		"cdp(method, **params)",
 		"evaluate(js)",
-		"finalize_tabs(keep=None)",
+		"release_tabs(tab_ids=None)",
+		"mark_deliverable(tab_id)",
 		"open_tab(url='', window_mode=None)",
 		"user_tabs()",
 		"memory_put(domain, kind,",

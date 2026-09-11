@@ -130,9 +130,10 @@ writing the final response:
 3. Verify the resulting row/file with native file tools. Only persisted
    rows/files count as experience deposition.
 
-Call `finalize_tabs()` exactly once as the last browser action. The checkpoint
-may write/read memory files after finalization, but must not call browser helpers
-again.
+After organizing results and closing only your unneeded temporary pages, call
+`release_tabs()` as the last browser operation and check `failed`/`remaining`.
+The checkpoint may write/read memory files after successful release, but must
+not call browser helpers again this turn.
 
 ## Decision tree at wrap-up
 

@@ -169,6 +169,7 @@ async function run() {
   // Seed the owning session directly into the store, pointing at group 100.
   const ownerState = await backend.store.getSession(OLD_SESSION);
   ownerState.chromeGroupId = 100;
+  ownerState.tabOrigins[String(tabId)] = "user";
   await backend.store.save();
 
   // A different session tries to claim the tab → must fail with a hint.
@@ -176,8 +177,9 @@ async function run() {
     () => backend.claimUserTab({ session_id: "obu-new-task", turn_id: "turn-1", tabId, window_mode: "user" }),
     (error) => {
       const message = String(error.message);
-      assert.ok(message.includes(`already part of browser session ${OLD_SESSION}`), `message should name the owning session, got: ${message}`);
-      assert.ok(message.includes(`OBU_SESSION_ID=${OLD_SESSION}`), `message should carry the resume hint, got: ${message}`);
+      assert.ok(message.includes(`owned by browser session ${OLD_SESSION}`), `message should name the owning session, got: ${message}`);
+      assert.ok(message.includes("release_tabs()"), `message should carry the release hint, got: ${message}`);
+      assert.equal(error.data.ownerSessionId, OLD_SESSION);
       return true;
     },
     "claimUserTab must reject tabs owned by another session"

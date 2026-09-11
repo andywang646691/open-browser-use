@@ -81,10 +81,13 @@ guess an id.
 - Use coordinates or raw CDP only when DOM/JS access is insufficient; inspect
   the relevant helper contract first.
 
-Session state persists the last active tab across `obu exec` processes, but the
-local Python tab pointer resets. Use `open_tab()` or `claim_tab()` only when
-selecting a different tab or taking over a user tab explicitly requested by the
-user.
+Ownership persists across `obu exec` scripts within the current browser turn;
+the local Python tab pointer resets, while the session remembers the active tab.
+At each new turn, list tabs, explicitly `claim_tab()` the requested page, and
+re-inspect its current state. Resume the same task workspace, not its old lock.
+`user_tabs()` includes `ownerSessionId`: a different owner must release before
+you claim. Never bypass a conflict by sharing its session ID or guessing that
+an idle owner is dead.
 
 **Done when:** the requested result is verified, or a bounded failure and its
 observable cause have been recorded in the task workspace.
@@ -107,10 +110,16 @@ Before writing the final response, complete this sequence exactly once:
    tools. `memory_put()` only appends to `site-memory.lines`; it does not create
    technique or runbook files. A checkpoint is complete only when every chosen
    artifact exists and is readable, or the no-artifact decision is explicit.
-4. **Finalize browser state.** Call `finalize_tabs()` exactly once, as the last
-   browser action, keeping tabs only when the user needs the live page. After
-   this call, do not call any browser helper; file reads and writes are still
-   allowed.
+4. **Organize and release browser state.** While still owning the pages, call
+   `mark_deliverable(id)` for user-facing results and `close_tab(id)` for your
+   unneeded temporary pages. Do not close the user's original pages unless
+   requested. Keep unfinished pages simply by not closing them. Finally call
+   `release_tabs()` with no arguments to release all current ownership, even
+   when waiting for login, approval or another turn. Check `failed` and
+   `remaining`; cleanup is complete only when both are empty. Report partial
+   failures and explicitly retry failed releases if appropriate. After successful
+   release, do not use browser helpers again this turn; file work is allowed.
+   Do not use deprecated `finalize_tabs()` or `turn-ended` for this workflow.
 
 Use `kind="fail"` for a trap, `kind="surprise"` for unexpected structure, and
 `kind="tip"` sparingly for a hard-won positive pattern. `fail` and `surprise`
@@ -119,7 +128,8 @@ private links, or routine success. Write a map of reusable site structure, not
 a task diary.
 
 **Done when:** persistence has been verified or explicitly ruled out, and
-`finalize_tabs()` has completed exactly once.
+all current tab ownership has been released successfully (or a cleanup failure
+has been explicitly reported).
 
 ### 5. Report
 
