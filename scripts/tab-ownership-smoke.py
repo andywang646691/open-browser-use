@@ -8,10 +8,13 @@ Use --session-id to choose an isolated test identity. All created pages are clos
 # Probe the new method before creating any page. An old extension must fail here.
 assert not release_tabs([])["failed"]
 known = {tab["id"] for tab in user_tabs()}
-page = open_tab("data:text/html,<title>OBU ownership smoke</title><h1>Ownership fixture</h1>", window_mode="isolated")
+page = open_tab(window_mode="isolated")
 tab_id = page["id"]
 assert tab_id not in known
 try:
+    # Populate only our fresh about:blank fixture; avoid data-URL navigation
+    # restrictions and asynchronous navigation unrelated to ownership.
+    evaluate("document.title = 'OBU ownership smoke'; document.body.innerHTML = '<h1>Ownership fixture</h1>'")
     cdp("Accessibility.getFullAXTree")
     assert evaluate("document.title") == "OBU ownership smoke"
     result = release_tabs([tab_id])

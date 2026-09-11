@@ -27,10 +27,14 @@ mark_deliverable 各自职责独立。删除 handoff 新用法，不新增 end_t
 - [x] 最终 make ci/diff 检查通过。
 - [x] make local-install，更新实际 PATH 指向的主仓库 linked package 二进制；
   api-sheet 与 CLI help 验证新 helper/命令，不只检查版本号。
-- [ ] 扩展重载后专用页面 smoke；若需用户操作，明确标为未完成，不冒充验收。
+- [x] 合并 main 并重载扩展后，专用 about:blank 页面真实 Chrome smoke 通过：
+  release 不关闭页面、重领、mark 保持 ownership、跨 session 领取分组内已释放页。
+  所有测试页均显式关闭，相关 session ownership 释放。
 - [x] history 与最终结果同步；真实扩展验收明确未完成。
 
 ## 进度记录
 
 2026-09-11：新 Skill 统一 release；旧 finalize 留兼容但退出 API sheet。
-真实当前扩展仍是旧进程，未重载；CLI 构建不能证明浏览器 runtime 已更新。
+初次验收时扩展仍是旧进程；合并 main 后用户重载，新接口及真实 smoke 已验证。
+测试 data URL 标题未就绪且等待后仍失败，未确认导航根因；改为直接填充新建
+about:blank fixture，排除不相关导航因素后 ownership 流程通过。

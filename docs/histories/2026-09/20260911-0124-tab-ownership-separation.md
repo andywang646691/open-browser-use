@@ -28,8 +28,11 @@ close 与 deliverable 独立，finalize 退出新流程，不新增 end_turn。
 - make ci 基线及实现后通过，git diff --check 通过。
 - make local-install 已执行，同时更新实际 PATH 所链接主仓库包的平台二进制；
   obu api-sheet/release-tabs --help/mark-deliverable --help 验证新功能存在。
-- 当前真实 Chrome 扩展仍为旧进程；未重载，未做真实页面验收，不声称已经生效。
-  scripts/tab-ownership-smoke.py 留待更新扩展后运行。没有操作私人后台。
+- 已合并 main，用户重载后新接口生效。专用 about:blank fixture 验证 release
+  保留页面、重领、成果标记不释放，以及不同 session 接管已释放的分组页面；
+  测试页已关闭并释放 ownership。没有操作私人后台。
+- 原 smoke data URL 的标题断言失败，增加等待仍失败，未断言根因；测试改为
+  直接填充自己新建的 about:blank 页面，隔离与 ownership 无关的导航因素。
 - 无自动崩溃锁回收/lease；同 session 的多个执行者需上层协调。旧 finalize
   的 legacy handoff 仍会保留锁，仅为兼容，并非新推荐流程。
 
