@@ -119,7 +119,6 @@ Before writing the final response, complete this sequence exactly once:
    `remaining`; cleanup is complete only when both are empty. Report partial
    failures and explicitly retry failed releases if appropriate. After successful
    release, do not use browser helpers again this turn; file work is allowed.
-   Do not use deprecated `finalize_tabs()` or `turn-ended` for this workflow.
 
 Use `kind="fail"` for a trap, `kind="surprise"` for unexpected structure, and
 `kind="tip"` sparingly for a hard-won positive pattern. `fail` and `surprise`
@@ -155,7 +154,7 @@ persisted experience.
 ## References
 
 - [references/tabs.md](references/tabs.md): tab lifecycle, claiming,
-  deliverable/handoff, file chooser, downloads, and clipboard details.
+  deliverable results, file chooser, downloads, and clipboard details.
 - [references/memory.md](references/memory.md): memory paths, artifact formats,
   checkpoint decision tree, deduplication, and staleness rules.
 - [references/installation.md](references/installation.md): installation and

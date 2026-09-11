@@ -50,19 +50,10 @@ assert not report["failed"] and not report["remaining"], report
 ```
 
 Waiting for user input: leave the page open and call `release_tabs()`.
-No handoff status or task pause API is needed.
+No separate task-pause status is needed.
 
-## Compatibility
-
-`finalize_tabs` / `finalize-tabs` / wire `finalizeTabs` are deprecated compatibility
-entry points, omitted from the normal API sheet. Their legacy handoff retains
-ownership; deliverable keeps and releases the page. They are not silently
-reinterpreted. New scripts must use the independent actions above.
-Legacy `turn-ended` only detaches/ends active-turn state; it is not release.
-`close_tab` now requires ownership, including for legacy cleanup scripts.
-
-Reload the updated extension before using the new helpers. An old extension
-reports an unsupported method; do not fall back to finalize handoff.
+Reload the updated extension before using the helpers. An old extension may
+report an unsupported method; stop and update it rather than guessing a fallback.
 
 ## Files and clipboard
 
