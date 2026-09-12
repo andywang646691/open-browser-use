@@ -17,6 +17,7 @@ import math
 import os
 import socket
 import struct
+import subprocess
 import sys
 import time
 from collections import deque
@@ -30,6 +31,8 @@ _TURN_ID = "{}-{}".format(_SESSION_ID, time.time_ns())
 _WINDOW_MODE = os.environ.get("OBU_WINDOW_MODE", "")
 _SOCKET_PATH = os.environ.get("OBU_SCRIPT_SOCKET", "")
 _SOCKET_ERROR = os.environ.get("OBU_SCRIPT_SOCKET_ERROR", "")
+_MAC_APPROVAL_HELPER = os.environ.get("OBU_MAC_APPROVE_HELPER", "")
+_MAC_APPROVAL_PROC = None
 _CONN = None
 _CURRENT_TAB = None
 _NEXT_REQ_ID = 0
@@ -96,6 +99,35 @@ def _get_conn(timeout=None):
     return _CONN
 
 
+def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
+    """Start the client-side macOS approval helper once per script process."""
+    global _MAC_APPROVAL_PROC
+    if sys.platform != "darwin" or not _MAC_APPROVAL_HELPER:
+        return
+    mode = (cdp_mode or "auto").strip().lower()
+    if mode == "extension":
+        return
+    if method not in {
+        "attach", "executeCdp", "readClipboardText", "writeClipboardText",
+        "readClipboard", "writeClipboard", "waitForFileChooser", "setFileChooserFiles",
+    }:
+        return
+    if _MAC_APPROVAL_PROC is not None and _MAC_APPROVAL_PROC.poll() is None:
+        return
+    try:
+        _MAC_APPROVAL_PROC = subprocess.Popen(
+            [_MAC_APPROVAL_HELPER, "__mac-approve"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError:
+        # The browser request remains authoritative. If helper startup fails,
+        # Chrome's approval sheet simply remains visible for manual approval.
+        _MAC_APPROVAL_PROC = None
+
+
 def _request(method, params=None):
     """Send one JSON-RPC request and return the matching result payload.
 
@@ -120,6 +152,9 @@ def _request(method, params=None):
     request["params"].setdefault("turn_id", _TURN_ID)
     if _WINDOW_MODE:
         request["params"].setdefault("window_mode", _WINDOW_MODE)
+    cdp_mode = os.environ.get("OBU_CDP_MODE", "").strip().lower()
+    if cdp_mode:
+        request["params"].setdefault("_cdpMode", cdp_mode)
     # Local absolute deadline lets the extension reject an expired queued
     # action before starting it. This does not cancel already-started actions.
     request["params"]["_deadlineUnixMs"] = int((time.time() + _TIMEOUT) * 1000)
@@ -139,6 +174,7 @@ def _request(method, params=None):
             _SOCKET_ERROR = ("request write failed; delivery is unknown; restart the script "
                              "and verify browser state before retrying")
             raise
+        _maybe_start_mac_remote_debugging_approval(method, cdp_mode)
         while True:
             body = _read_frame(conn, deadline)
             if body.get("id") != request_id:

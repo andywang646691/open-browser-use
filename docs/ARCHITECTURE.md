@@ -57,17 +57,36 @@ README 与 skill 不再宣传这两种模式。
 
 ## Open Browser Use Chrome Route
 
-Chrome route 的目标拓扑：
+Chrome route 的拓扑结构：
 
 ```text
-upper-layer runtime / CLI
-  -> /tmp/open-browser-use/<uuid>.sock
-  -> open-browser-use Go native host
-  -> Chrome Native Messaging stdio
-  -> Open Browser Use MV3 service worker
-  -> chrome.tabs / chrome.debugger / chrome.history / chrome.tabGroups
-  -> user's real Chrome profile
+upper-layer runtime / CLI / Python prelude
+  ├─ [macOS client helper] System Events -> Chrome windows -> remote-debugging sheet
+  │    exact Allow/允许 approval + safe automation-banner dismissal
+  └─ /tmp/open-browser-use/<uuid>.sock
+     -> open-browser-use Go native host
+        ├─ [Direct CDP] one patient Browser Root WebSocket
+        │    ws://127.0.0.1:<port>/devtools/browser/... (DevToolsActivePort)
+        │    Target.attachToTarget(flatten=true) per claimed Chrome tab
+        │    Direct page CDP execution + event forwarding (onCDPEvent)
+        └─ Chrome Native Messaging stdio
+             -> Open Browser Use MV3 service worker
+             -> exact tabId->targetId mapping (getTargetMapping)
+             -> chrome.tabs / chrome.tabGroups / chrome.history / chrome.downloads / sidecar
+             -> extension-mediated CDP backup/fallback
 ```
+
+### CDP 传输层与模式选择
+
+- **模式选择**：由 `OBU_CDP_MODE=auto|direct|extension` 环境变量及 hidden 参数 `_cdpMode` 控制。
+  - `auto`（默认）：如果所选 Chrome 实例暴露了可用的 `DevToolsActivePort` 且 Root WebSocket 连通，优先使用 Direct CDP；不可用时自动降级至扩展端 CDP。
+  - `direct`：强制使用 Direct CDP。若 `DevToolsActivePort` 缺失、不可达或目标无法附加，直接报错失败，不隐式退化。
+  - `extension`：强制使用既有扩展端 CDP（保留完整 `chrome.debugger` 链路不变）。
+- **路由绑定一致性**：在 `auto` 模式下，标签页首次 `attach`（或懒加载 `executeCdp`）为该 `(session_id, tabId)` 选定并记录路由；后续同一 attachment 的命令与 detach 恒走同一路由，杜绝双重附加冲突。
+- **精确 Target 映射**：扩展端暴露窄作用域 RPC `getTargetMapping({ session_id, turn_id, tabId })`，验证 ownership 并重载 discarded 页面后，直接读取 `chrome.debugger.getTargets()` 返回精确 `targetId`，严禁跨 profile 进行 URL/title 猜测。
+- **生命周期与清理**：`releaseTabs`、`closeUserTab`、`finalizeTabs`、`turnEnded` 会同步回收 Direct CDP 关联 session 并执行 `Target.detachFromTarget`，保持与扩展端所有权一致。
+- **单一 patient Browser 连接**：personal Chrome 可以把 Browser WebSocket 的 HTTP Upgrade 停在远程调试授权弹窗上。Host 对这条本地 Browser Root 握手不设置 transport-local handshake timeout，并在 daemon 范围只保留一个 pending 初始化；某个 caller deadline 到期只停止该 caller 的等待，不取消共享握手，也不创建第二个授权弹窗。批准后后续 task 复用同一 Browser Root 连接；Chrome 重启/连接断开后再懒加载重建。
+- **macOS 客户端授权助手**：Accessibility 不在 native host 内执行。CLI / Python launcher 在 Direct-capable 请求已经写入 socket 后启动隐藏 `__mac-approve` helper，通过 `System Events -> Google Chrome -> windows -> sheets` 精确匹配 `Allow remote debugging?` / `要允许远程调试吗？`，只按 `Allow` / `允许`；批准后 best-effort 收起 automation banner，明确拒绝“在设置中关闭”/`Disable in settings`。这样避免把 TCC 权限绑定到频繁重建的 native-host binary。
 
 Chrome native messaging host name 固定为：
 

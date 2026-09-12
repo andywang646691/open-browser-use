@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -147,6 +148,38 @@ class PreludeTest(unittest.TestCase):
         request = self.last("getUserTabs")
         self.assertEqual(request["params"]["session_id"], "test-session")
         self.assertTrue(request["params"]["turn_id"].startswith("test-session-"))
+
+    def test_cdp_mode_propagated_from_env(self):
+        with mock.patch.dict(os.environ, {"OBU_CDP_MODE": "direct"}):
+            self.sh.tabs()
+            request = self.last("getTabs")
+            self.assertEqual(request["params"].get("_cdpMode"), "direct")
+
+    def test_direct_attach_starts_mac_approval_helper(self):
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use"
+        self.sh._MAC_APPROVAL_PROC = None
+        with mock.patch.object(self.sh.sys, "platform", "darwin"), \
+             mock.patch.object(self.sh.subprocess, "Popen", return_value=proc) as popen:
+            self.sh._maybe_start_mac_remote_debugging_approval("attach", "direct")
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0], ["/tmp/open-browser-use", "__mac-approve"])
+
+    def test_extension_mode_never_starts_mac_approval_helper(self):
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use"
+        self.sh._MAC_APPROVAL_PROC = None
+        with mock.patch.object(self.sh.sys, "platform", "darwin"), \
+             mock.patch.object(self.sh.subprocess, "Popen") as popen:
+            self.sh._maybe_start_mac_remote_debugging_approval("attach", "extension")
+        popen.assert_not_called()
+
+    def test_request_starts_client_approval_after_direct_frame_is_sent(self):
+        with mock.patch.object(self.sh, "_maybe_start_mac_remote_debugging_approval") as start:
+            with mock.patch.dict(os.environ, {"OBU_CDP_MODE": "direct"}):
+                self.sh._request("attach", {"tabId": 42})
+        start.assert_called_once_with("attach", "direct")
+        self.assertEqual(self.last("attach")["params"]["tabId"], 42)
 
     def test_request_includes_local_deadline_for_queue_expiry(self):
         orig_timeout = self.sh._TIMEOUT

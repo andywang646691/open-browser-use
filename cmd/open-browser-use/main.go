@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -23,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ifuryst/open-browser-use/internal/cdp"
 	"github.com/ifuryst/open-browser-use/internal/host"
 	"github.com/ifuryst/open-browser-use/internal/wire"
 	"github.com/spf13/cobra"
@@ -53,7 +53,7 @@ func main() {
 
 func run(args []string) error {
 	if isNativeMessagingLaunch(args) {
-		return runHost(host.DefaultSocketDir, "")
+		return runHost(host.DefaultSocketDir, "", "")
 	}
 	cmd := newRootCommand()
 	cmd.SetArgs(args)
@@ -132,6 +132,8 @@ func newRootCommand() *cobra.Command {
 		newTaskinitCommand(),
 		newApiSheetCommand(),
 		newExecCommand(),
+		newMacApprovalCommand(),
+		newMacBannerCommand(),
 		newTasksizesCommand(),
 		newVersionCommand(),
 	)
@@ -141,23 +143,26 @@ func newRootCommand() *cobra.Command {
 func newHostCommand() *cobra.Command {
 	var socketDir string
 	var socketPath string
+	var cdpMode string
 	cmd := &cobra.Command{
 		Use:   "host",
 		Short: "Run the native messaging host relay",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runHost(socketDir, socketPath)
+			return runHost(socketDir, socketPath, cdpMode)
 		},
 	}
 	cmd.Flags().StringVar(&socketDir, "socket-dir", host.DefaultSocketDir, "directory for SDK Unix sockets")
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "explicit SDK Unix socket path")
+	cmd.Flags().StringVar(&cdpMode, "cdp-mode", "", "CDP transport mode: auto|direct|extension (default auto)")
 	return cmd
 }
 
-func runHost(socketDir string, socketPath string) error {
+func runHost(socketDir string, socketPath string, cdpMode string) error {
 	relay := host.NewRelay(host.Config{
 		SocketDir:  socketDir,
 		SocketPath: socketPath,
+		CDPMode:    cdpMode,
 	}, os.Stdin, os.Stdout)
 	return relay.Serve(context.Background())
 }
@@ -860,59 +865,9 @@ func chromeProfileSortKey(dir string) string {
 	return "2:" + dir
 }
 
-// resolveProfileForInstanceID searches each Chrome profile's
-// `Local Extension Settings/<extensionID>/` LevelDB files for the given
-// instanceID UUID. LevelDB stores values as raw bytes, so a UUID string written
-// via `chrome.storage.local` appears verbatim in the .log / .ldb files of the
-// profile that generated it. This gives us a stable mapping from
-// instanceID -> profile directory without needing the host to know its profile
-// at startup or requiring extra extension permissions.
 func resolveProfileForInstanceID(extensionID string, instanceID string) (browserID string, browserName string, browserInstance string, directory string, displayName string, ok bool) {
-	if extensionID == "" || instanceID == "" {
-		return "", "", "", "", "", false
-	}
-	roots, err := supportedBrowserProfileRoots()
-	if err != nil {
-		return "", "", "", "", "", false
-	}
-	needle := []byte(instanceID)
-	for _, root := range roots {
-		profiles, err := chromeProfileDirs(root.Root)
-		if err != nil {
-			continue
-		}
-		names := chromeProfileDisplayNames(root.Root)
-		for _, profileDir := range profiles {
-			storageDir := filepath.Join(profileDir, "Local Extension Settings", extensionID)
-			entries, err := os.ReadDir(storageDir)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				name := entry.Name()
-				if !strings.HasSuffix(name, ".log") && !strings.HasSuffix(name, ".ldb") {
-					continue
-				}
-				info, err := entry.Info()
-				if err != nil || info.Size() > maxLevelDBScanBytes {
-					continue
-				}
-				payload, err := os.ReadFile(filepath.Join(storageDir, name))
-				if err != nil {
-					continue
-				}
-				if !bytes.Contains(payload, needle) {
-					continue
-				}
-				dir := filepath.Base(profileDir)
-				return root.BrowserID, root.BrowserName, root.BrowserInstance, dir, names[dir], true
-			}
-		}
-	}
-	return "", "", "", "", "", false
+	bID, bName, bInst, dir, dName, _, ok := cdp.ResolveProfileForInstanceID(extensionID, instanceID)
+	return bID, bName, bInst, dir, dName, ok
 }
 
 func chromeProfileDisplayNames(root string) map[string]string {
@@ -2470,6 +2425,9 @@ func invokeWithProfile(socketPath string, socketDir string, browser string, prof
 	if err := wire.WriteJSON(conn, request); err != nil {
 		return nil, err
 	}
+	if requestMayNeedDirectCDPApproval(method, params) {
+		startMacRemoteDebuggingUIHelper()
+	}
 	var response map[string]any
 	if err := wire.ReadJSON(conn, &response); err != nil {
 		return nil, err
@@ -2490,6 +2448,11 @@ func applySessionDefaults(params map[string]any, sessionID string) {
 	if _, ok := params["window_mode"]; !ok {
 		if mode := envValue("OBU_WINDOW_MODE", ""); mode != "" {
 			params["window_mode"] = mode
+		}
+	}
+	if _, ok := params["_cdpMode"]; !ok {
+		if mode := envValue("OBU_CDP_MODE", ""); mode != "" {
+			params["_cdpMode"] = strings.TrimSpace(strings.ToLower(mode))
 		}
 	}
 }

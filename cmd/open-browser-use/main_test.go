@@ -1702,3 +1702,32 @@ func readManifestFromZIP(path string) ([]byte, error) {
 	}
 	return nil, errors.New("manifest.json not found in ZIP")
 }
+
+func TestApplySessionDefaultsCDPMode(t *testing.T) {
+	t.Run("default empty when env unset", func(t *testing.T) {
+		t.Setenv("OBU_CDP_MODE", "")
+		params := map[string]any{}
+		applySessionDefaults(params, "test-sess")
+		if _, ok := params["_cdpMode"]; ok {
+			t.Errorf("expected no _cdpMode when env unset, got %v", params["_cdpMode"])
+		}
+	})
+
+	t.Run("injects OBU_CDP_MODE from env", func(t *testing.T) {
+		t.Setenv("OBU_CDP_MODE", "direct")
+		params := map[string]any{}
+		applySessionDefaults(params, "test-sess")
+		if params["_cdpMode"] != "direct" {
+			t.Errorf("expected _cdpMode = direct, got %v", params["_cdpMode"])
+		}
+	})
+
+	t.Run("does not overwrite explicit _cdpMode", func(t *testing.T) {
+		t.Setenv("OBU_CDP_MODE", "extension")
+		params := map[string]any{"_cdpMode": "direct"}
+		applySessionDefaults(params, "test-sess")
+		if params["_cdpMode"] != "direct" {
+			t.Errorf("expected preserved _cdpMode = direct, got %v", params["_cdpMode"])
+		}
+	})
+}

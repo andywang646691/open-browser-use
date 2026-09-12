@@ -103,6 +103,9 @@ func scriptSubprocessEnv(options socketOptions, socketPath string, socketErr err
 		fmt.Sprintf("OBU_SCRIPT_TIMEOUT_SECONDS=%g", timeout.Seconds()),
 		"OBU_SCRIPT_SOCKET_ERROR=",
 	}
+	if executable, err := os.Executable(); err == nil && executable != "" {
+		scriptEnv = append(scriptEnv, "OBU_MAC_APPROVE_HELPER="+executable)
+	}
 	if options.sessionID != "" {
 		scriptEnv = append(scriptEnv, "OBU_SESSION_ID="+options.sessionID)
 	}

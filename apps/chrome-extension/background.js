@@ -266,7 +266,7 @@ class BrowserBackend {
     // Chrome APIs yield: serialize ownership transitions so two claimers cannot
     // both pass the owner check. Long-running event waits are not in this queue.
     let ownershipQueue = Promise.resolve();
-    for (const name of ["createTab", "claimUserTab", "releaseTabs", "markDeliverable", "closeUserTab", "finalizeTabs", "attach", "detach", "executeCdp", "setFileChooserFiles"]) {
+    for (const name of ["createTab", "claimUserTab", "releaseTabs", "markDeliverable", "closeUserTab", "finalizeTabs", "attach", "detach", "executeCdp", "setFileChooserFiles", "getTargetMapping"]) {
       const operation = this[name].bind(this);
       this[name] = (params) => {
         let started = false;
@@ -861,6 +861,29 @@ class BrowserBackend {
       .catch((error) => ({ ok: false, error: String(error?.message ?? error) }));
     check();
     return { focus, lifecycle };
+  }
+
+  async getTargetMapping(params) {
+    await this.requireSessionTab(params, "getTargetMapping");
+    const tabId = requireTabId(params, "getTargetMapping");
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.discarded) {
+      await chrome.tabs.reload(tabId);
+    }
+    let match = null;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const targets = chrome.debugger?.getTargets ? await chrome.debugger.getTargets() : [];
+      match = targets.find((t) => t.tabId === tabId);
+      if (match) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!match) {
+      throw new Error(`No debuggable target found for tab ${tabId}`);
+    }
+    return {
+      tabId,
+      targetId: match.id
+    };
   }
 
   async detach(params) {

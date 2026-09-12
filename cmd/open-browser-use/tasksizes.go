@@ -20,7 +20,7 @@ import (
 
 // taskSizeEntry is one task-slug directory under a domain.
 type taskSizeEntry struct {
-	Name     string    // task-slug directory name
+	Name     string // task-slug directory name
 	Bytes    int64
 	Files    int
 	ModTime  time.Time

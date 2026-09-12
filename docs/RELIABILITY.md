@@ -62,6 +62,16 @@ obu exec path/to/task.py -- --limit 20 "argument with spaces"
 此顺序依据 [CDP Network 契约](https://chromedevtools.github.io/devtools-protocol/tot/Network/)，
 不是新的 HTTP 抓取封装，不解析或修改站点返回值。
 
+## Direct CDP 传输稳定性与有界恢复
+
+- **单一 patient Browser 握手**：personal Chrome 在首次 Browser Root WebSocket 连接时可能把 HTTP Upgrade 停在“Allow remote debugging?”授权框。Direct client 不设置独立 handshake timeout；Host 在 daemon 范围仅创建一条 pending 初始化连接。caller `_deadlineUnixMs` 到期只结束该 caller 的等待，不取消共享 Browser 握手，因此不会因重试制造第二条连接或第二个授权弹窗。批准后所有 task 复用同一 Browser Root 连接。
+- **客户端侧 macOS 授权**：CLI / Python prelude 先把 Direct-capable JSON-RPC 请求写入 Unix socket，再启动隐藏 `__mac-approve` helper。helper 使用 `System Events -> Chrome windows -> sheets` 精确寻找中英文远程调试 sheet，只点击 `Allow` / `允许`；成功后 best-effort 收起 automation banner。native messaging host 不持有 Accessibility 职责，也不因开发期 binary 重建而反复依赖 TCC 身份。
+- **Browser 断线恢复**：已建立的 Browser Root WebSocket 关闭后，Manager 被视为 stale；下一次 Direct 请求清掉旧 transport manager 并建立新的单一 patient 握手。标签页的 direct/extension route 选择保持 sticky，新 Manager 会按原 route 懒 attach，不静默改走另一条 transport。
+- **有界超时与隔离（Quarantine）**：Direct CDP 执行请求在本地具有有界超时（默认 10s 或 caller 指定的 timeoutMs / _deadlineUnixMs）。本地超时仅剔除并隔离本地 pending 请求，不声称取消了 Chrome 底层动作；超时后迟到的 Chrome 回复被安全丢弃，不污染后续请求。
+- **迟到 Attach 自动回收**：当 `Target.attachToTarget` 超时后如果 Chrome 在稍后回复了新的 sessionId，Host 会触发 best-effort `Target.detachFromTarget` 立即释放该迟到 session，杜绝底层 session 泄露。
+- **主 frame 导航异步唤醒重放**：当接收到 main frame 的 `Page.frameNavigated` 事件时，Host 异步启动后台唤醒重放（`Page.setWebLifecycleState(active)` 与 `Emulation.setFocusEmulationEnabled(true)`），不阻塞 WebSocket 读取主循环。
+- **生命周期同步收尾**：任何 `releaseTabs`、`closeUserTab`、`finalizeTabs` 或会话断开动作均显式调用 Direct CDP Detach 回收目标 session，确保与 Chrome 扩展端所有权严格对齐。
+
 ## 后台页面 readiness 与排队过期
 
 OBU 扩展负责页面生命周期，不把“请用户激活闲置标签页”当常规抓取步骤：
