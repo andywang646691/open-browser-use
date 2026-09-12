@@ -31,6 +31,8 @@ type Client struct {
 	lateHandlers map[int64]LateResponseHandler
 	closed       bool
 	onEvent      EventCallback
+	done         chan struct{}
+	doneOnce     sync.Once
 	reqIDSeq     atomic.Int64
 }
 
@@ -81,6 +83,7 @@ func Dial(ctx context.Context, wsURL string, onEvent EventCallback) (*Client, er
 		pending:      make(map[int64]chan *rawResponse),
 		lateHandlers: make(map[int64]LateResponseHandler),
 		onEvent:      onEvent,
+		done:         make(chan struct{}),
 	}
 
 	go client.readLoop()
@@ -100,6 +103,7 @@ func (c *Client) readLoop() {
 		}
 		c.mu.Unlock()
 		_ = c.conn.Close()
+		c.doneOnce.Do(func() { close(c.done) })
 	}()
 
 	for {
@@ -270,4 +274,9 @@ func (c *Client) IsClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closed
+}
+
+// Done is closed when the browser-root CDP WebSocket is no longer usable.
+func (c *Client) Done() <-chan struct{} {
+	return c.done
 }

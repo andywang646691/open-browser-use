@@ -14,6 +14,8 @@ const p = (tabId = 1, session_id = 'test') => ({ session_id, turn_id: 'turn', ta
 
 async function fixture(options = {}) {
   const calls = [];
+  const actionCalls = [];
+  const debuggerDetachListeners = [];
   const tabs = new Map([[1, { id: 1, url: 'https://example.test/', windowId: 1, groupId: -1, autoDiscardable: true }]]);
   const groups = new Map();
   let nextId = 10;
@@ -46,7 +48,11 @@ async function fixture(options = {}) {
       async detach({ tabId }) { calls.push(['detach', tabId]); },
       async getTargets() { return []; },
       async sendCommand({ tabId }, method) { calls.push([method, tabId]); if (method === 'Page.setWebLifecycleState') tabs.get(tabId).frozen = false; return {}; },
-      onDetach: noopEvent, onEvent: noopEvent
+      onDetach: { addListener(fn) { debuggerDetachListeners.push(fn); } }, onEvent: noopEvent
+    },
+    action: {
+      async setIcon(details) { actionCalls.push(['setIcon', structuredClone(details)]); },
+      async setTitle(details) { actionCalls.push(['setTitle', structuredClone(details)]); }
     },
     alarms: { async create() {}, onAlarm: noopEvent },
     runtime: { onInstalled: noopEvent, onMessage: noopEvent, connectNative() { return { onMessage: noopEvent, onDisconnect: noopEvent, postMessage() {} }; } },
@@ -54,11 +60,39 @@ async function fixture(options = {}) {
   };
   const context = vm.createContext({ chrome, console, setTimeout, clearTimeout, crypto: globalThis.crypto, URL });
   vm.runInContext(source + '\nglobalThis.Backend = BrowserBackend;', context);
+  actionCalls.length = 0;
+  debuggerDetachListeners.length = 0;
   const backend = new context.Backend({ readinessTimeoutMs: 80, queueTimeoutMs: 30, cursorTimeoutMs: 10, ...options });
   const session = await backend.store.getSession('test');
   session.tabOrigins['1'] = 'user';
-  return { chrome, backend, tabs, calls, session };
+  const fireDebuggerDetach = (tabId) => {
+    for (const listener of debuggerDetachListeners) listener({ tabId });
+  };
+  return { chrome, backend, tabs, calls, actionCalls, fireDebuggerDetach, session };
 }
+
+test('toolbar icon reflects CDP attachment, not native host connectivity', async () => {
+  const { backend, actionCalls, fireDebuggerDetach } = await fixture();
+  assert.deepEqual(actionCalls, [], 'native transport startup must not drive the toolbar icon');
+
+  await backend.setDirectCdpConnectionState({ connected: true });
+  assert.equal(actionCalls.at(-2)?.[1]?.path?.[16], 'icons/icon-connected-16.png');
+  assert.equal(actionCalls.at(-1)?.[1]?.title, 'Open Browser Use — CDP connected');
+
+  await backend.setDirectCdpConnectionState({ connected: false });
+  assert.equal(actionCalls.at(-2)?.[1]?.path?.[16], 'icons/icon-16.png');
+  assert.equal(actionCalls.at(-1)?.[1]?.title, 'Open Browser Use — CDP disconnected');
+
+  await backend.attach(p());
+  assert.equal(actionCalls.at(-2)?.[0], 'setIcon');
+  assert.equal(actionCalls.at(-2)?.[1]?.path?.[16], 'icons/icon-connected-16.png');
+  assert.equal(actionCalls.at(-1)?.[1]?.title, 'Open Browser Use — CDP connected');
+
+  fireDebuggerDetach(1);
+  await sleep(0);
+  assert.equal(actionCalls.at(-2)?.[1]?.path?.[16], 'icons/icon-16.png');
+  assert.equal(actionCalls.at(-1)?.[1]?.title, 'Open Browser Use — CDP disconnected');
+});
 
 test('discarded page is reloaded in background before attach; lifecycle before focus', async () => {
   const { backend, tabs, calls } = await fixture();

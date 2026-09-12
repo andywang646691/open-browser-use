@@ -39,6 +39,10 @@ const requiredFiles = [
   "icons/icon-32.png",
   "icons/icon-48.png",
   "icons/icon-128.png",
+  "icons/icon-connected-16.png",
+  "icons/icon-connected-32.png",
+  "icons/icon-connected-48.png",
+  "icons/icon-connected-128.png",
   "images/cursor-chat.png",
   "popup.css",
   "popup.html",
@@ -114,6 +118,10 @@ icons/icon-16.png
 icons/icon-32.png
 icons/icon-48.png
 icons/icon-128.png
+icons/icon-connected-16.png
+icons/icon-connected-32.png
+icons/icon-connected-48.png
+icons/icon-connected-128.png
 images/cursor-chat.png
 popup.css
 popup.html
@@ -130,6 +138,10 @@ EOF
     icons/icon-32.png \
     icons/icon-48.png \
     icons/icon-128.png \
+    icons/icon-connected-16.png \
+    icons/icon-connected-32.png \
+    icons/icon-connected-48.png \
+    icons/icon-connected-128.png \
     images/cursor-chat.png \
     popup.css \
     popup.html \

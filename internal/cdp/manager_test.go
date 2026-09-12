@@ -78,6 +78,42 @@ func setupMockCDPServer(t *testing.T, handler func(msg map[string]any, send func
 	return server, wsURL
 }
 
+func TestManagerConnectionObserverTracksRootSocket(t *testing.T) {
+	server, wsURL := setupMockCDPServer(t, func(msg map[string]any, send func(v any)) {})
+	defer server.Close()
+
+	states := make(chan bool, 4)
+	mgr := NewManager(ManagerConfig{
+		WSURL: wsURL,
+		ConnectionObserver: func(connected bool) {
+			states <- connected
+		},
+	})
+	if err := mgr.Connect(context.Background()); err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	select {
+	case connected := <-states:
+		if !connected {
+			t.Fatal("expected connected=true after root CDP WebSocket opens")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing connected=true notification")
+	}
+
+	if err := mgr.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+	select {
+	case connected := <-states:
+		if connected {
+			t.Fatal("expected connected=false when root CDP WebSocket closes")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing connected=false notification")
+	}
+}
+
 func TestManagerAttachAndWake(t *testing.T) {
 	var commands []string
 	var mu sync.Mutex

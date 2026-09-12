@@ -224,7 +224,7 @@ function sampleBilinear(image, x, y) {
   ];
 }
 
-function resizeImage(image, size) {
+function resizePixels(image, size) {
   const pixels = Buffer.alloc(size * size * 4);
   const xScale = image.width / size;
   const yScale = image.height / size;
@@ -241,12 +241,36 @@ function resizeImage(image, size) {
       pixels[target + 3] = sampled[3];
     }
   }
+  return pixels;
+}
 
-  return encodePng(size, size, pixels);
+function addConnectedIndicator(pixels, size) {
+  const result = Buffer.from(pixels);
+  const innerRadius = Math.max(2, Math.round(size * 0.18));
+  const outerRadius = innerRadius + Math.max(1, Math.round(size * 0.06));
+  const center = size - outerRadius - Math.max(1, Math.round(size * 0.05));
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const distance = Math.hypot(x - center, y - center);
+      if (distance > outerRadius) continue;
+      const offset = (y * size + x) * 4;
+      const connected = distance <= innerRadius;
+      result[offset] = connected ? 34 : 255;
+      result[offset + 1] = connected ? 197 : 255;
+      result[offset + 2] = connected ? 94 : 255;
+      result[offset + 3] = 255;
+    }
+  }
+  return result;
 }
 
 await mkdir(iconDir, { recursive: true });
 const sourceImage = decodePng(await readFile(sourceIconPath));
 for (const size of sizes) {
-  await writeFile(path.join(iconDir, `icon-${size}.png`), resizeImage(sourceImage, size));
+  const pixels = resizePixels(sourceImage, size);
+  await writeFile(path.join(iconDir, `icon-${size}.png`), encodePng(size, size, pixels));
+  await writeFile(
+    path.join(iconDir, `icon-connected-${size}.png`),
+    encodePng(size, size, addConnectedIndicator(pixels, size))
+  );
 }

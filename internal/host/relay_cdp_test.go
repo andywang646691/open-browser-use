@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,6 +73,28 @@ func setupRelayMockCDP(t *testing.T) *mockRelayServer {
 	}))
 	m.wsURL = "ws://" + m.server.Listener.Addr().String() + "/devtools/browser/test"
 	return m
+}
+
+func TestRelayPublishesDirectCDPStateToExtension(t *testing.T) {
+	var output bytes.Buffer
+	relay := NewRelay(Config{}, strings.NewReader(""), &output)
+
+	relay.notifyExtensionDirectCDPState(true)
+	payload, err := wire.ReadFrame(&output, wire.DefaultMaxFrame)
+	if err != nil {
+		t.Fatalf("read notification: %v", err)
+	}
+	var notification map[string]any
+	if err := json.Unmarshal(payload, &notification); err != nil {
+		t.Fatalf("unmarshal notification: %v", err)
+	}
+	if notification["method"] != "setDirectCdpConnectionState" {
+		t.Fatalf("unexpected method: %v", notification["method"])
+	}
+	params, _ := notification["params"].(map[string]any)
+	if params["connected"] != true || params["transport"] != "direct" {
+		t.Fatalf("unexpected params: %v", params)
+	}
 }
 
 func TestRelayCDPModeExplicitExtension(t *testing.T) {

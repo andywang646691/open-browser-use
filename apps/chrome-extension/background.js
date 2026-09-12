@@ -4,6 +4,14 @@ const SESSION_STATE_KEY = "OPEN_BROWSER_USE_SESSION_STATE";
 const RECONNECT_ALARM_NAME = "open-browser-use-native-reconnect";
 const HEARTBEAT_ALARM_NAME = "open-browser-use-heartbeat";
 const DEFAULT_CDP_TIMEOUT_MS = 10_000;
+const ACTION_ICON_DEFAULT = {
+  16: "icons/icon-16.png",
+  32: "icons/icon-32.png"
+};
+const ACTION_ICON_CDP_CONNECTED = {
+  16: "icons/icon-connected-16.png",
+  32: "icons/icon-connected-32.png"
+};
 // Stay below the CLI's default 10s request deadline, including queue time.
 const TAB_READINESS_TIMEOUT_MS = 6_000;
 const OWNERSHIP_QUEUE_TIMEOUT_MS = 2_000;
@@ -70,6 +78,7 @@ class NativeTransport {
     this.hostName = hostName;
     this.port = null;
     this.messageCallback = null;
+    this.disconnectCallback = null;
     this.reconnectAttempt = 0;
     this.status = {
       hostName: this.hostName,
@@ -87,6 +96,10 @@ class NativeTransport {
 
   setMessageCallback(callback) {
     this.messageCallback = callback;
+  }
+
+  setDisconnectCallback(callback) {
+    this.disconnectCallback = callback;
   }
 
   sendMessage(message) {
@@ -111,6 +124,7 @@ class NativeTransport {
       });
       port.onDisconnect.addListener(() => {
         this.port = null;
+        this.disconnectCallback?.();
         this.scheduleReconnect(chrome.runtime.lastError?.message ?? "native host disconnected");
       });
     } catch (error) {
@@ -246,6 +260,7 @@ class BrowserBackend {
     // remains quarantined until its late attach/wake has been detached.
     this.pendingReadiness = new Map();
     this.attachedTabs = new Set();
+    this.directCdpConnected = false;
     // Session tabs that have the CDP-level background wake applied (focus
     // emulation + lifecycle "active"), for both isolated-window and user-window
     // sessions. Tracked by tabId because navigation events only carry a tabId,
@@ -296,8 +311,29 @@ class BrowserBackend {
       if (typeof source.tabId === "number") {
         this.attachedTabs.delete(source.tabId);
         this.wokenTabIds.delete(source.tabId);
+        void this.updateCdpActionState();
       }
     });
+  }
+
+  async updateCdpActionState() {
+    const action = chrome.action;
+    if (!action) return;
+    const connected = this.directCdpConnected || this.attachedTabs.size > 0;
+    await Promise.allSettled([
+      action.setIcon?.({ path: connected ? ACTION_ICON_CDP_CONNECTED : ACTION_ICON_DEFAULT }),
+      action.setTitle?.({
+        title: connected
+          ? "Open Browser Use — CDP connected"
+          : "Open Browser Use — CDP disconnected"
+      })
+    ]);
+  }
+
+  async setDirectCdpConnectionState(params) {
+    this.directCdpConnected = params?.connected === true;
+    await this.updateCdpActionState();
+    return { ok: true };
   }
 
   ping() {
@@ -805,6 +841,7 @@ class BrowserBackend {
             await chrome.debugger.sendCommand({ tabId }, "Page.setWebLifecycleState", { state: "active" });
           }
           this.attachedTabs.add(tabId);
+          await this.updateCdpActionState();
           check();
         }
         const wake = await this.applyBackgroundWake(tabId, check);
@@ -1654,6 +1691,7 @@ class BrowserBackend {
       }
       this.cursorByTabId.delete(tabId);
     }
+    await this.updateCdpActionState();
   }
 
   async ensureCursorContentScript(sessionId, tabId) {
@@ -1882,7 +1920,11 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 const backend = new BrowserBackend();
 const transport = new NativeTransport(NATIVE_HOST_NAME);
+transport.setDisconnectCallback(() => {
+  void backend.setDirectCdpConnectionState({ connected: false });
+});
 const peer = new JsonRpcPeer(transport, backend);
+void backend.updateCdpActionState();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "GET_NATIVE_HOST_STATUS") {
     const status = transport.getStatus();

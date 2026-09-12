@@ -353,6 +353,24 @@ func (r *Relay) BroadcastNotification(method string, params any) {
 	}
 }
 
+func (r *Relay) notifyExtensionDirectCDPState(connected bool) {
+	notification := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "setDirectCdpConnectionState",
+		"params": map[string]any{
+			"connected": connected,
+			"transport": "direct",
+		},
+	}
+	payload, err := json.Marshal(notification)
+	if err != nil {
+		return
+	}
+	if err := r.writeExtension(payload); err != nil {
+		r.logger.Debug("failed to publish direct CDP state to extension", "connected", connected, "error", err)
+	}
+}
+
 // GetTargetMapping implements cdp.TargetMapper to request exact tabId->targetId from extension.
 func (r *Relay) GetTargetMapping(ctx context.Context, sessionID, turnID string, tabID int) (string, error) {
 	reqID := "obu:internal:map:" + strconv.FormatInt(r.nextReqID.Add(1), 10)
@@ -571,9 +589,10 @@ func (r *Relay) createCDPManager() (*cdp.Manager, error) {
 	}
 
 	cfg := cdp.ManagerConfig{
-		WSURL:       portInfo.WebSocketURL(),
-		Mapper:      r,
-		Broadcaster: r,
+		WSURL:              portInfo.WebSocketURL(),
+		Mapper:             r,
+		Broadcaster:        r,
+		ConnectionObserver: r.notifyExtensionDirectCDPState,
 	}
 	mgr := cdp.NewManager(cfg)
 	// Local personal Chrome can park this Upgrade indefinitely while waiting

@@ -33,12 +33,13 @@ type DirectSession struct {
 }
 
 type ManagerConfig struct {
-	WSURL         string
-	Mapper        TargetMapper
-	Broadcaster   EventBroadcaster
-	AttachTimeout time.Duration
-	WakeTimeout   time.Duration
-	CDPTimeout    time.Duration
+	WSURL              string
+	Mapper             TargetMapper
+	Broadcaster        EventBroadcaster
+	ConnectionObserver func(connected bool)
+	AttachTimeout      time.Duration
+	WakeTimeout        time.Duration
+	CDPTimeout         time.Duration
 }
 
 type fileChooserWaiter struct {
@@ -62,12 +63,15 @@ type activeFileChooser struct {
 }
 
 type Manager struct {
-	config      ManagerConfig
-	client      *Client
-	mu          sync.RWMutex
-	sessions    map[SessionKey]*DirectSession
-	byCDPSessID map[string]*DirectSession
-	closed      bool
+	config         ManagerConfig
+	client         *Client
+	mu             sync.RWMutex
+	sessions       map[SessionKey]*DirectSession
+	byCDPSessID    map[string]*DirectSession
+	closed         bool
+	connStateMu    sync.Mutex
+	connStateKnown bool
+	connState      bool
 
 	// File chooser handling
 	fcMu          sync.Mutex
@@ -108,7 +112,33 @@ func (m *Manager) Connect(ctx context.Context) error {
 	m.client = client
 	m.closed = false
 	m.mu.Unlock()
+	m.reportConnectionState(true)
+	go func(current *Client) {
+		<-current.Done()
+		m.mu.RLock()
+		isCurrent := m.client == current
+		m.mu.RUnlock()
+		if isCurrent {
+			m.reportConnectionState(false)
+		}
+	}(client)
 	return nil
+}
+
+func (m *Manager) reportConnectionState(connected bool) {
+	observer := m.config.ConnectionObserver
+	if observer == nil {
+		return
+	}
+	m.connStateMu.Lock()
+	if m.connStateKnown && m.connState == connected {
+		m.connStateMu.Unlock()
+		return
+	}
+	m.connStateKnown = true
+	m.connState = connected
+	m.connStateMu.Unlock()
+	observer(connected)
 }
 
 func (m *Manager) IsConnected() bool {
@@ -787,6 +817,7 @@ func (m *Manager) Close() error {
 	m.mu.Unlock()
 
 	m.cleanAllFileChoosers()
+	m.reportConnectionState(false)
 
 	if client != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
