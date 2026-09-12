@@ -255,6 +255,8 @@ func newApiSheetCommand() *cobra.Command {
 func newExecCommand() *cobra.Command {
 	var options socketOptions
 	var envFile string
+	var taskRef string
+	var taskRoot string
 	cmd := &cobra.Command{
 		Use:   "exec <file.py> [-- script-args...]",
 		Short: "Run a task script file with accurate tracebacks",
@@ -272,11 +274,32 @@ Env: the task's .obu.env (same directory as the script, written by "obu
 taskinit") is loaded unless --env-file is given or the flag overrides it.
 Explicit flags beat .obu.env; .obu.env beats the inherited environment.
 
-Example:
-  open-browser-use exec ~/.open-browser-use/tasks/x.com/fetch-0827/01_probe.py`,
+Examples:
+	obu exec --task x.com/fetch-a8k3 01_probe.py   # cwd-independent task execution
+	obu exec 01_probe.py                            # from the task workspace
+	obu exec ~/.open-browser-use/tasks/x.com/fetch-a8k3/01_probe.py  # legacy/full path`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scriptPath := args[0]
+			var taskDir string
+			if taskRef != "" {
+				root := taskRoot
+				if root == "" {
+					root = defaultTaskRoot()
+				}
+				resolvedTaskDir, err := resolveTaskRef(root, taskRef)
+				if err != nil {
+					return err
+				}
+				resolvedScript, err := resolveTaskScript(resolvedTaskDir, scriptPath)
+				if err != nil {
+					return err
+				}
+				taskDir = resolvedTaskDir
+				scriptPath = resolvedScript
+			} else if cmd.Flags().Changed("task-root") {
+				return errors.New("--task-root requires --task")
+			}
 			// .obu.env: explicit --env-file wins; otherwise the same directory
 			// as the script (never an upward search — task-scoped means
 			// anchored to the task directory).
@@ -288,7 +311,11 @@ Example:
 				}
 				fileEnv = parsed
 			} else {
-				loaded, err := loadTaskEnv(scriptPath)
+				envBase := scriptPath
+				if taskDir != "" {
+					envBase = taskDir
+				}
+				loaded, err := loadTaskEnv(envBase)
 				if err != nil {
 					return err
 				}
@@ -318,6 +345,8 @@ Example:
 	}
 	addSocketFlags(cmd, &options)
 	cmd.Flags().StringVar(&envFile, "env-file", "", "explicit task env file (defaults to .obu.env next to the script)")
+	cmd.Flags().StringVar(&taskRef, "task", "", "taskRef from taskinit; resolves the script from that task workspace")
+	cmd.Flags().StringVar(&taskRoot, "task-root", "", "task workspace root for --task (defaults to $OBU_TASK_DIR or ~/.open-browser-use/tasks)")
 	return cmd
 }
 

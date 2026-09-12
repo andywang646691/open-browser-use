@@ -201,23 +201,25 @@ MV3 extension、加重放验证与失效淘汰机制，成本显著高于收益�
 代码片段）；一次性任务史 → 站点行（map, not diary）。像「抓网络请求」这类
 endpoint 漂移风险高的，以 technique 为主，runbook 只在多次验证稳定后落。
 
-## 6. 检索与复用路径（读取，全部原生工具）
+## 6. 检索与复用路径（读取）
 
-skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep/find/read
-完成（具体命令写法沉淀在 `references/memory.md`）：
+skill 强制「读前写后」秩序。新任务的确定性检索下沉到 `taskinit`，避免
+LLM 每次重复 grep/find/read；原生文件工具保留为截断、缺失和旧任务的 fallback：
 
-1. **按域预取**：访问一个尚未在本次 OBU 任务建立经验的 domain 前：
-   - `grep "domain=<domain>|" site-memory.lines` → 该域原子行；
-   - 有 `runbook=` 链接的脚本一并读；
-   - `tech=` 链接的技术文件也读出。
+1. **按域 bootstrap**：`obu taskinit <domain>/<slug>` 在同一输出中读取当前
+   normalized domain 的 `site-memory.lines` 原始行，并加载这些行显式链接的
+   `tech=` technique 与 `runbook=` 文件。输出有总量/单文件预算，截断或缺失
+   必须显式标记；bootstrap 不自动执行 runbook。旧任务或被截断内容才回退到
+   `grep "domain=<domain>|" site-memory.lines` + 原生 read。
 2. **失败信号（机械化触发，不依赖猜词）**：同一目标尝试 ≥2 次仍失败、
    或出现「静默失败」（页面正常但数据缺失、滚动/事件不触发）时，
    **无条件**先全量读技术层索引（`find techniques/ -name "*.md"` 后
-   逐文件读标题 + 关键词 + 触发信号，预算 ≤50 行），再按域预取。
+   逐文件读标题 + 关键词 + 触发信号，预算 ≤50 行），再确保当前域经验已加载。
    LLM 不需要猜词——索引全量可见，靠读触发信号自匹配。
    典型翻盘点：滚动抓不到 → 改抓网络请求。
-3. **复用 runbook**：命中时一键复跑并对照 header 的「验证」判成败：
-   `obu exec runbooks/<name>.py`；验证失败即标记 stale。
+3. **复用 runbook**：命中并确认适用时一键复跑并对照 header 的「验证」判成败：
+   `obu exec runbooks/<name>.py`；验证失败即标记 stale。`taskinit` 只加载内容，
+   永不自动执行 runbook。
 
 ## 7. 防爆炸治理（硬规则，全部可机检）
 
@@ -306,23 +308,27 @@ skill 强制「读前写后」秩序，检索有两个触发器，全部用 grep
 
 ```markdown
 ## Process
-### 1. Initialize
-Use `obu taskinit ...`; finish when the task directory and selected target are known.
-### 2. Load context
-Before the first browser action for each domain, read its rows and linked
-techniques/runbooks; inspect the runtime API. Finish when the next helper contract
-is known. After two failures or a silent failure, read the complete techniques
-index before another attempt.
-### 3. Execute
-Use task files with `obu exec`; verify each action and the requested result. Finish
-when the result is verified or the bounded failure is recorded.
-### 4. Finish
+### 1. Bootstrap
+Use `obu taskinit ...`; its bounded output includes the task workspace/target,
+exact-domain matched user tabs with ownership, matching memory + linked artifacts,
+the runtime API, a `taskRef=<domain>/<instance>`, task root, and absolute task
+`dir`. Do not repeat `user_tabs()` / grep/read when bootstrap is sufficient; do
+not auto-claim tabs or execute runbooks. Write task files to the printed `dir`.
+After two failures or a silent failure, read the complete techniques index
+before another attempt.
+### 2. Execute
+Execute workspace files with `obu exec --task <taskRef> <file>` so caller cwd is
+irrelevant; use `--task-root` for a non-default root. Select/claim the requested
+tab and verify each action and the requested result. Finish when the result is
+verified or the bounded failure is recorded.
+### 3. Finish
 Before the final response, review scripts/results for expensive knowledge. Persist
 site facts with `memory_put(...)`, create/update techniques or verified runbooks,
 and re-read every written row/file. Explicitly record the no-artifact decision when
-nothing is worth saving. Then call `finalize_tabs()` exactly once as the last browser
-action; after it, only memory file operations may continue.
-### 5. Report
+nothing is worth saving. Mark only real user-facing result pages as deliverable,
+close unneeded temporary pages, then call `release_tabs()` as the final browser
+operation and verify failed/remaining are empty.
+### 4. Report
 Report verified results and limitations only after persistence and cleanup complete.
 
 ```

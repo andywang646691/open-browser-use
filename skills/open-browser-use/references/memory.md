@@ -25,7 +25,11 @@ store with a team. The effective files are
 
 Task scripts are a **parallel** workspace, not memory: every script for a
 task lives at `~/.open-browser-use/tasks/<domain>/<slug>/` (`$OBU_TASK_DIR`
-overrides) and is run with `obu exec <file>` (accurate tracebacks).
+overrides). `taskinit` prints both the absolute workspace `dir` (write files
+there) and `taskRef=<domain>/<instance>`; run a top-level task file with
+`obu exec --task <taskRef> <file>` from any caller cwd. Use `--task-root` when
+the task root is non-default and not already supplied by `$OBU_TASK_DIR`.
+Legacy `obu exec <path>` remains valid (accurate tracebacks).
 It's audit trail, not knowledge.
 When a flow stabilizes across tasks, promote its verified script to a
 runbook here (`runbooks/<name>.py`), then the task dir can be discarded.
@@ -107,15 +111,19 @@ re-runs. Store the verified script as `runbooks/<name>.py` with a header:
   stale, fix, or delete. Only store code that actually ran through; don't
   store one-shot scripts (record a row / technique instead).
 
-## Read — two triggers, native tools
+## Read — two triggers
 
-1. **Before the first browser action for a domain in the current OBU task**:
-   `grep "domain=<domain>|" <memory-root>/site-memory.lines` → its rows; read
-   any linked `tech=` technique files and `runbook=` scripts.
+1. **At new-task bootstrap**: `obu taskinit <domain>/<slug>` reads the matching
+   domain rows and explicitly linked `tech=` technique / `runbook=` files into
+   bounded bootstrap output. Do not grep/read the same artifacts again unless
+   taskinit marked them truncated or unavailable. On an existing task created
+   before this bootstrap behavior, use the native-file fallback:
+   `grep "domain=<domain>|" <memory-root>/site-memory.lines`, then read linked
+   artifacts.
 2. **On repeated failure** (≥2 tries, or a silent failure: page normal but data
    missing / scrolling or events not firing): enumerate every
    `<memory-root>/techniques/*.md` and read its title + 关键词 + 触发信号
-   before trying again, then do #1.
+   before trying again, then ensure the current domain rows are available.
    Don't guess keywords — the bounded index is small enough to read fully.
 
 ## Mandatory memory checkpoint before the final response

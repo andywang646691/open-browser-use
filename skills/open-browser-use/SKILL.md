@@ -10,7 +10,7 @@ Use OBU's real Chrome session through CDP: `cdp("Domain.method", **params)`,
 
 ## Process
 
-### 1. Initialize
+### 1. Bootstrap
 
 For a new task, run one setup command:
 
@@ -18,59 +18,66 @@ For a new task, run one setup command:
 obu taskinit <domain>/<slug> [--browser X --profile Y]
 ```
 
-This creates the task workspace, selects the browser/profile, and prints the
-runtime API sheet. Use the printed `<domain>/<slug>-<unique>/` directory;
-never construct its suffix yourself. If multiple targets are connected, stop and ask the user
-which target to use; never silently choose one. To continue an existing task,
-run `obu exec <file>` from its existing task directory instead of starting a
+This creates the task workspace, selects the browser/profile, and hydrates the
+execution context in the same output. The bootstrap includes:
+
+- only user tabs whose normalized URL host exactly matches the task domain
+  (`www.` is normalized away), including each tab's `ownerSessionId`;
+- matching `site-memory.lines` rows plus explicitly linked technique/runbook
+  content, bounded and marked when truncated or unavailable; and
+- the runtime API sheet.
+
+`taskinit` does not claim tabs and never executes linked runbooks. Keep both
+identities it prints: `taskRef=<domain>/<instance>` is the CLI handle, while
+`dir=<absolute task workspace>` is where task files must be written. Never
+construct either instance suffix yourself. If multiple targets are connected,
+stop and ask the user which target to use; never silently choose one. To
+continue an existing task, reuse its taskRef/workspace instead of starting a
 new `taskinit` instance.
 
-**Done when:** the task directory and the user-selected browser target are
-known.
+Do not repeat the old startup ceremony when bootstrap data is sufficient: do
+not immediately call `user_tabs()`, grep `site-memory.lines`, or reread linked
+artifacts that `taskinit` already printed. Call `user_tabs()` only as a fallback
+when no bootstrap tab matches, the task intentionally crosses domains, or a
+fresh full tab view is required. If a linked artifact was truncated and its
+remaining content matters, read that file directly. When an approach has
+failed twice, or the page is normal but data/events are missing, enumerate all
+`techniques/*.md` under the memory root and read each file's title, 关键词, and
+触发信号 before another attempt.
 
-### 2. Load context
+When resuming an existing task, run `obu api-sheet` once if the runtime API is
+not already known, and use `help(x)` when an exact helper signature, return
+shape, or ordering matters. Runtime docstrings are the source of truth.
 
-Before the first browser action for each normalized domain in the current OBU
-task:
+**Done when:** the taskRef, absolute task directory, selected target, relevant
+tab ownership, existing domain memory, and helper contracts needed for the next
+action are known.
 
-1. Read the domain rows from
-   `~/.open-browser-use/memory/site-memory.lines` (or the same file below
-   `$OBU_MEMORY_DIR`).
-2. Read every linked
-   `~/.open-browser-use/memory/techniques/<name>.md` and
-   `~/.open-browser-use/memory/runbooks/<name>.py`.
-3. Read the API sheet printed by `taskinit` (or run `obu api-sheet` once when
-   resuming), then use `help(x)` for helpers whose exact
-   signature, return shape, or ordering matters. The runtime docstring is the
-   source of truth, not this file.
-
-When an approach has failed twice, or the page is normal but data/events are
-missing, enumerate all `techniques/*.md` under the memory root and read each
-file's title, 关键词, and 触发信号 before another attempt.
-
-**Done when:** the target's existing memory has been loaded and the helper
-contracts needed for the next action are known.
-
-### 3. Execute
+### 2. Execute
 
 Write every attempt as a real Python file in the task workspace and run it with:
 
 ```sh
-obu exec ~/.open-browser-use/tasks/<domain>/<slug>-<unique>/02_fetch.py
+obu exec --task <taskRef> 02_fetch.py
 ```
 
-The task workspace is the audit trail: failed attempts stay diffable and
-tracebacks retain the file's own line numbers. `obu exec` runs the Python
-subprocess with the task workspace (the script's parent directory) as its cwd;
-the caller's cwd is unchanged. It supports normal Python, script-local imports
-and `__file__`; pass script arguments with
-`obu exec <file> -- <args...>`. Helpers are pre-imported and accept Python
-arguments, so do not hand write JSON or shell serialization.
+Write files using the absolute `dir` printed by `taskinit`, for example
+`<dir>/02_fetch.py`. Execute them by taskRef; do not rely on shell cwd and do
+not repeat the workspace path in every exec call. `obu exec --task` resolves
+the workspace, loads that task's `.obu.env`, and runs the script with the task
+workspace as Python cwd. With a custom task root, pass the printed root as
+`--task-root <root>` unless the same `$OBU_TASK_DIR` is already inherited.
+The legacy `obu exec <path>` form remains available for compatibility. Script
+arguments follow `--`, e.g. `obu exec --task <taskRef> 02_fetch.py -- <args...>`.
+Helpers are pre-imported and accept Python arguments, so do not hand write JSON
+or shell serialization.
 
 During browser work:
 
-- List tabs before acting; use `user_tabs()` for existing user tabs and never
-guess an id.
+- On a new task, choose from the domain-matched tabs already printed by
+  `taskinit`; do not relist all user tabs first. Use `user_tabs()` only when the
+  bootstrap set is insufficient or when a later turn needs a fresh ownership
+  view. Never guess an id.
 - Read the accessibility tree first; use `evaluate(js)` when the tree lacks
   the needed data.
 - Act through `evaluate(js)` and verify the resulting state after every action.
@@ -98,7 +105,7 @@ an idle owner is dead.
 **Done when:** the requested result is verified, or a bounded failure and its
 observable cause have been recorded in the task workspace.
 
-### 4. Finish: persist, verify, clean up
+### 3. Finish: persist, verify, clean up
 
 Before writing the final response, complete this sequence exactly once:
 
@@ -137,7 +144,7 @@ a task diary.
 all current tab ownership has been released successfully (or a cleanup failure
 has been explicitly reported).
 
-### 5. Report
+### 4. Report
 
 Only after the finish sequence, report the verified result, relevant
 limitations, and unresolved failures. Claim that experience was saved only when

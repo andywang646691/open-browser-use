@@ -194,6 +194,120 @@ func TestExecUsesTaskWorkspaceAsWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestExecAcceptsScriptNameFromTaskWorkspace(t *testing.T) {
+	requirePython3(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".obu.env"), []byte("OBU_SESSION_ID=obu-relative-path\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "02_fetch.py"), []byte("print(_SESSION_ID)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(caller); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+
+	cmd := newExecCommand()
+	cmd.SetArgs([]string{"--socket", filepath.Join(dir, "missing.sock"), "02_fetch.py"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("relative exec failed: %v (%s)", err, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "obu-relative-path" {
+		t.Fatalf("relative exec did not load workspace .obu.env: %q", got)
+	}
+}
+
+func TestExecTaskRefWorksFromArbitraryCwd(t *testing.T) {
+	requirePython3(t)
+	root := t.TempDir()
+	taskDir, session, err := createTaskWorkspace(root, "example.test", "fetch", taskTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "02_fetch.py"), []byte("import pathlib\nprint(_SESSION_ID)\nprint(pathlib.Path.cwd())\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref := taskRefForDir("example.test", taskDir)
+
+	cmd := newExecCommand()
+	cmd.SetArgs([]string{
+		"--socket", filepath.Join(root, "missing.sock"),
+		"--task-root", root,
+		"--task", ref,
+		"02_fetch.py",
+	})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("task-ref exec failed: %v (%s)", err, stderr.String())
+	}
+	resolvedDir, err := filepath.EvalSymlinks(taskDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := stdout.String()
+	for _, want := range []string{session, resolvedDir} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("task-ref exec output missing %q: %q", want, text)
+		}
+	}
+}
+
+func TestExecTaskRefUsesOBUTaskDirByDefault(t *testing.T) {
+	requirePython3(t)
+	root := t.TempDir()
+	t.Setenv("OBU_TASK_DIR", root)
+	taskDir, session, err := createTaskWorkspace(root, "example.test", "fetch", taskTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "01_probe.py"), []byte("print(_SESSION_ID)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newExecCommand()
+	cmd.SetArgs([]string{
+		"--socket", filepath.Join(root, "missing.sock"),
+		"--task", taskRefForDir("example.test", taskDir),
+		"01_probe.py",
+	})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("task-ref default-root exec failed: %v (%s)", err, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != session {
+		t.Fatalf("session=%q, want %q", got, session)
+	}
+}
+
+func TestExecTaskRefRejectsScriptPathEscape(t *testing.T) {
+	root := t.TempDir()
+	taskDir, _, err := createTaskWorkspace(root, "example.test", "fetch", taskTarget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := newExecCommand()
+	cmd.SetArgs([]string{"--task-root", root, "--task", taskRefForDir("example.test", taskDir), "../escape.py"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "file name inside the task workspace") {
+		t.Fatalf("expected path escape rejection, got %v", err)
+	}
+}
+
 func TestScriptSubprocessEnvKeepsFractionalTimeoutAndClearsStaleError(t *testing.T) {
 	env := scriptSubprocessEnv(socketOptions{timeout: 250 * time.Millisecond}, "synthetic.sock", nil)
 	for _, want := range []string{"OBU_SCRIPT_TIMEOUT_SECONDS=0.25", "OBU_SCRIPT_SOCKET_ERROR="} {

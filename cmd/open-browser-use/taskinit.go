@@ -4,8 +4,11 @@ package main
 // pick a target (single connected target auto-selected; multiple enumerated
 // with a ready-to-run rerun line so the user picks), create the task
 // workspace under the task root, write the task's .obu.env (session id,
-// browser, profile), verify the target with a ping, and print the api-sheet.
-// Later `obu exec <file>` auto-loads the same-directory .obu.env.
+// browser, profile), verify the target, hydrate execution context (domain-
+// matched tabs with ownership plus matching memory and linked artifacts), and
+// print the api-sheet. It also prints a taskRef plus absolute workspace path;
+// later `obu exec --task <taskRef> <file>` resolves the workspace independent
+// of the caller cwd and auto-loads that task's .obu.env.
 
 import (
 	"errors"
@@ -274,7 +277,7 @@ func newTaskinitCommand() *cobra.Command {
 	var taskRoot string
 	cmd := &cobra.Command{
 		Use:   "taskinit <domain>/<slug>",
-		Short: "Start a task: workspace, .obu.env, target check, api-sheet",
+		Short: "Start a task and hydrate its browser/memory context",
 		Long: `Start an OBU task with one command:
 - resolves the target: explicit --browser/--profile win; otherwise a single
   connected target is adopted, and multiple targets are listed with their
@@ -283,10 +286,16 @@ func newTaskinitCommand() *cobra.Command {
   the task root (default ~/.open-browser-use/tasks, override $OBU_TASK_DIR
   / --path); repeated runs of the same <domain>/<slug> never collide and
   the printed directory is the one to use.
+- prints a stable taskRef (<domain>/<instance>) plus the absolute task dir;
+  later "obu exec --task <taskRef> <file.py>" can resolve that workspace from
+  any caller cwd. A non-default root can be supplied to exec with --task-root.
 - writes .obu.env (OBU_SESSION_ID=obu-<domain>-<instance>, browser, profile).
-- pings the target and prints the api-sheet, so the startup ritual fits in
-  one round. Domain is normalized like site memory (www. dropped); slugs are
-  validated against the audit scanner's reserved names.
+- checks the target, lists only user tabs whose normalized host matches the
+  task domain (including ownerSessionId), loads matching site-memory rows plus
+  explicitly linked techniques/runbooks within bounded output budgets, and
+  prints the api-sheet. It does not claim tabs or execute runbooks. Domain is
+  normalized like site memory (www. dropped); slugs are validated against the
+  audit scanner's reserved names.
 
 To continue an old instance, exec its scripts directly (obu exec <file>
 auto-loads that instance's .obu.env) — no need to taskinit again.`,
@@ -300,6 +309,10 @@ auto-loads that instance's .obu.env) — no need to taskinit again.`,
 			if root == "" {
 				root = defaultTaskRoot()
 			}
+			root, err = filepath.Abs(root)
+			if err != nil {
+				return err
+			}
 			socketDir := host.DefaultSocketDir
 			target, err := resolveTaskTarget(socketDir, browser, profile, "taskinit "+quoteTaskArg(args[0]))
 			if err != nil {
@@ -309,12 +322,17 @@ auto-loads that instance's .obu.env) — no need to taskinit again.`,
 			if err != nil {
 				return err
 			}
+			matchedTabs, tabsErr := fetchMatchedTaskTabs(socketDir, target, sessionID, domain)
+			taskRef := taskRefForDir(domain, taskDir)
 			writer := cmd.OutOrStdout()
-			fmt.Fprintf(writer, "✅ task: %s/%s\n", domain, filepath.Base(taskDir))
+			fmt.Fprintf(writer, "✅ task: %s\n", taskRef)
+			fmt.Fprintf(writer, "   taskRef: %s\n", taskRef)
+			fmt.Fprintf(writer, "   taskRoot: %s\n", root)
 			fmt.Fprintf(writer, "   dir:     %s  (.obu.env written)\n", taskDir)
 			fmt.Fprintf(writer, "   session: %s\n", sessionID)
 			fmt.Fprintf(writer, "   target:  %s  (%s)\n", target.Label, pingTaskTarget(socketDir, target))
 			fmt.Fprintln(writer)
+			renderBootstrapContext(writer, domain, matchedTabs, tabsErr, defaultMemoryRoot())
 			return renderAPISheet(writer)
 		},
 	}

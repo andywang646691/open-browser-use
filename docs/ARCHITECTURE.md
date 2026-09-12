@@ -187,13 +187,17 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   prelude，prelude 直接用标准库走 Browser Use JSON-RPC frame 协议。
   `open_tab`/`claim_tab` 设置当前 tab，供后续 `cdp`/`evaluate`
   复用；每轮结束用 `release_tabs()` 释放控制权，下轮重新 claim 并观察。
-- `obu exec <file.py>`：以文件路径执行任务脚本（对应任务工作区
-  脚本）。Go CLI 复用同一 socket 解析，把 go:embed 的 prelude
+- `obu exec --task <taskRef> <file.py>`：优先按 taskRef 定位任务工作区，
+  调用方 cwd 与脚本路径前缀都不再参与任务定位；taskRef 来自 `taskinit`
+  输出的 `<domain>/<instance>`，脚本参数必须是工作区顶层文件名。默认从
+  `$OBU_TASK_DIR` / `~/.open-browser-use/tasks` 解析；自定义根可显式传
+  `--task-root`。旧 `obu exec <file.py>` 文件路径模式继续兼容。
+  Go CLI 复用同一 socket 解析，把 go:embed 的 prelude
   （`script_helpers.py`）与 runner（`script_runner.py`）写入临时目录，
   spawn `python3 -u <runner> <file>`；runner 把 prelude 作为模块
   `sys.path` 导入并全量注入全局（含 `_SESSION_ID`/`_help` 等单下划线名，
   与 heredoc 拼接模式表面一致），再用 `runpy.run_path` 执行，`__file__`
-  指向任务文件、同目录模块可 import；`exec <file> -- <args...>` 把参数
+  指向任务文件、同目录模块可 import；`exec --task <taskRef> <file> -- <args...>` 把参数
   原样传给 `sys.argv`，并自动把 Python 子进程的 cwd 切换到任务文件所在的
   task workspace（调用方进程的 cwd 不受影响）。
   SyntaxError/RuntimeError 的 traceback 携带真实文件路径和文件内行号
@@ -219,21 +223,28 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   target（单 target 自动采用；多 target 列出带可复制 rerun 命令的清单并
   报错，保留"多 target 必问用户、不静默选 active window"硬规则），
   创建 `tasks/<domain>/<slug>-<unique>/` 原子分配实例
-  目录（不再附加时间戳，并发 taskinit 不会复用目录；输出的目录路径就是工作目录，
-  续跑旧任务直接 exec 其脚本，无需再 taskinit），写入 `.obu.env`
+  目录（不再附加时间戳，并发 taskinit 不会复用目录），并同时输出
+  `taskRef=<domain>/<instance>`、task root 与绝对 `dir`。Agent 用 `dir`
+  写任务文件，用 taskRef 调 `obu exec --task <taskRef> <file>`；两者都不得
+  自行猜 unique suffix，续跑旧任务无需再 taskinit。随后写入 `.obu.env`
   （`OBU_SESSION_ID=obu-<domain>-<实例>`/browser/profile；旧任务不迁移，
-  继续使用原 `.obu.env` 的 session id），ping 验证 target，
-  并输出 api-sheet。domain 归一化与 site-memory 一致（去 `www.`、小写）；
+  继续使用原 `.obu.env` 的 session id），ping 验证 target，并输出 bootstrap
+  context：只保留 normalized host 与任务 domain 精确匹配的用户 tab（含
+  `ownerSessionId`），读取匹配 site-memory 原始行及其显式链接的
+  technique/runbook（受输出预算限制，截断/缺失会标记），最后输出 api-sheet。
+  bootstrap 不自动 claim tab，也不执行 runbook；domain 归一化与 site-memory
+  一致（去 `www.`、小写）；
   domain/slug 校验拒绝路径分隔符、`.`/`..`、控制字符及审计扫描保留名
   （`__pycache__`/`.DS_Store`），slug 另有长度限制；拒绝 domain symlink。
   selector 同时匹配 browser/profile，保存带实例的完整 target，未映射的
-  profile 使用 extension instance id，防止退回 active registry。`obu exec <file>` 只读脚本**同目录** `.obu.env`（不向上查找，
-  任务强相关锚定任务目录），`--env-file` 显式覆盖；优先级
+  profile 使用 extension instance id，防止退回 active registry。`obu exec --task`
+  从解析出的 task workspace 读取 `.obu.env`；旧路径模式仍只读脚本**同目录**
+  `.obu.env`（两种模式都不向上查找），`--env-file` 显式覆盖；优先级
   flag > `--env-file`/`.obu.env` > 继承环境变量。
 - 任务工作区：每个任务的脚本按 `tasks/<domain>/<task-slug>/` 沉淀到
   `$OBU_TASK_DIR`（默认 `~/.open-browser-use/tasks/`），与 memory 并行根；
   domain 归一化规则与 site-memory 一致（去 `www.`、小写），task-slug 与
-  `OBU_SESSION_ID` 的 slug 对齐，脚本用 `obu exec <file>` 执行
+  `OBU_SESSION_ID` 的 slug 对齐，脚本优先用 `obu exec --task <taskRef> <file>` 执行
   （文件路径执行、traceback 行号与文件对齐、失败尝试留盘可 diff 可复盘，
   稳定流程 wrap-up 时升级为 runbook）。`obu tasksizes`
   按域名分组审计体积（任务数/文件数/总大小、域内 largest、

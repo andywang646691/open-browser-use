@@ -16,18 +16,23 @@ extension 继续负责 Chrome 生命周期。安全边界见 [SECURITY.md](SECUR
 ## Python 文件执行契约
 
 ```sh
-obu exec path/to/task.py -- --limit 20 "argument with spaces"
+obu exec --task x.com/fetch-a8k3 task.py -- --limit 20 "argument with spaces"
 ```
 
+- `taskinit` 输出 `taskRef=<domain>/<instance>`、task root 与绝对 task `dir`。
+  文件工具写入绝对 `dir`；执行工具使用 taskRef，因此调用方 cwd 不参与任务定位。
+  `exec --task` 默认按 `$OBU_TASK_DIR` / `~/.open-browser-use/tasks` 解析，非默认
+  root 用 `--task-root` 显式传入。旧 `obu exec <path>` 保持兼容。
 - `__file__` 是任务文件绝对路径，`__name__ == "__main__"`；traceback 行号
   是原文件行号，同目录模块可直接 import。
 - `--` 后的参数原样传给 `sys.argv[1:]`，不会当成 OBU flag 或 shell 代码。
 - Python 子进程的 cwd 自动切换到脚本所在的 task workspace；调用方进程的 cwd
   不受影响。脚本可直接使用相对路径读写任务目录内的数据。
 - helper 全量预导入（包括原有单下划线名称），完整 Python 语言不变。
-- stdout/stderr/退出码保持透传。`.obu.env` 仍只从脚本同目录读取，或显式
-  `--env-file` 指定；session/browser/profile 的 flag 优先于文件，再优先于继承环境。
-- taskinit 输出已经包含 api-sheet，新任务无需为同一份表再发起一次调用。
+- stdout/stderr/退出码保持透传。`exec --task` 从解析出的 task workspace 加载
+  `.obu.env`；旧路径模式仍只从脚本同目录读取。两者都可由 `--env-file` 显式
+  覆盖；session/browser/profile 的 flag 优先于文件，再优先于继承环境。
+- `taskinit` 是新任务 bootstrap：除 api-sheet 外，只输出 normalized host 与任务 domain 精确匹配的用户 tab（含 `ownerSessionId`），以及匹配 site-memory 和显式链接的 technique/runbook（有总量/单文件预算并标记截断）。它不 claim tab、不执行 runbook；bootstrap 足够时无需再调用 `user_tabs()` 或重复 grep/read memory。
 
 ## 请求与事件恢复
 
