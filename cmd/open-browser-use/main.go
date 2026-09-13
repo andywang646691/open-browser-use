@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ifuryst/open-browser-use/internal/cdp"
+	"github.com/ifuryst/open-browser-use/internal/diaglog"
 	"github.com/ifuryst/open-browser-use/internal/host"
 	"github.com/ifuryst/open-browser-use/internal/wire"
 	"github.com/spf13/cobra"
@@ -53,7 +54,17 @@ func main() {
 
 func run(args []string) error {
 	if isNativeMessagingLaunch(args) {
-		return runHost(host.DefaultSocketDir, "", "")
+		diaglog.Event("native_host_launch", map[string]any{
+			"argv":   append([]string(nil), args...),
+			"source": "chrome_native_messaging",
+		})
+		err := runHost(host.DefaultSocketDir, "", "")
+		fields := map[string]any{"reason": "native_host_serve_returned"}
+		if err != nil {
+			fields["error"] = err.Error()
+		}
+		diaglog.Event("native_host_exit", fields)
+		return err
 	}
 	cmd := newRootCommand()
 	cmd.SetArgs(args)
@@ -2426,7 +2437,16 @@ func invokeWithProfile(socketPath string, socketDir string, browser string, prof
 		return nil, err
 	}
 	if requestMayNeedDirectCDPApproval(method, params) {
-		startMacRemoteDebuggingUIHelper()
+		reason := fmt.Sprintf("direct-capable request %s may create or reuse the Browser Root WebSocket", method)
+		diaglog.Event("mac_approval_requested", map[string]any{
+			"reason":    reason,
+			"method":    method,
+			"cdpMode":   params["_cdpMode"],
+			"sessionID": params["session_id"],
+			"turnID":    params["turn_id"],
+			"deadline":  params["_deadlineUnixMs"],
+		})
+		startMacRemoteDebuggingUIHelper(reason)
 	}
 	var response map[string]any
 	if err := wire.ReadJSON(conn, &response); err != nil {

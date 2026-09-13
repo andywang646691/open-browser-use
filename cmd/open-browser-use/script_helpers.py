@@ -115,12 +115,18 @@ def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
     if _MAC_APPROVAL_PROC is not None and _MAC_APPROVAL_PROC.poll() is None:
         return
     try:
+        helper_env = os.environ.copy()
+        helper_env["OBU_MAC_APPROVAL_REASON"] = (
+            "Python script request {} may create or reuse the Browser Root WebSocket".format(method)
+        )
+        helper_env["OBU_MAC_APPROVAL_PARENT_PID"] = str(os.getpid())
         _MAC_APPROVAL_PROC = subprocess.Popen(
             [_MAC_APPROVAL_HELPER, "__mac-approve"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
+            env=helper_env,
         )
     except OSError:
         # The browser request remains authoritative. If helper startup fails,

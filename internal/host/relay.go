@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/ifuryst/open-browser-use/internal/cdp"
+	"github.com/ifuryst/open-browser-use/internal/diaglog"
 	"github.com/ifuryst/open-browser-use/internal/wire"
 )
 
@@ -146,6 +147,10 @@ func (r *Relay) Serve(ctx context.Context) error {
 		return err
 	}
 	r.logger.Info("open-browser-use native host listening", "socket", socketPath, "cdpMode", r.cdpMode)
+	diaglog.Event("native_host_listening", map[string]any{
+		"socketPath": socketPath,
+		"cdpMode":    r.cdpMode,
+	})
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- r.acceptLoop(ctx) }()
@@ -502,6 +507,9 @@ func (r *Relay) ensureCDPManager(ctx context.Context) (*cdp.Manager, error) {
 		r.cdpInitDone = nil
 		r.cdpInitErr = nil
 		_ = mgr.Close()
+		diaglog.Event("direct_cdp_reconnect_needed", map[string]any{
+			"reason": "browser_root_websocket_disconnected",
+		})
 	} else {
 		r.mu.Unlock()
 	}
@@ -521,6 +529,13 @@ func (r *Relay) ensureCDPManager(ctx context.Context) (*cdp.Manager, error) {
 		}
 	}
 	if r.cdpInitDone == nil {
+		reason := "initial_manager_creation"
+		if r.cdpManager == nil {
+			reason = "manager_missing_or_previous_initialization_failed"
+		}
+		diaglog.Event("direct_cdp_initializing", map[string]any{
+			"reason": reason,
+		})
 		done := make(chan struct{})
 		r.cdpInitDone = done
 		go r.initCDPManager(done)
@@ -565,6 +580,9 @@ func (r *Relay) initCDPManager(done chan struct{}) {
 }
 
 func (r *Relay) createCDPManager() (*cdp.Manager, error) {
+	diaglog.Event("direct_cdp_connect_started", map[string]any{
+		"reason": "browser_root_websocket_initialization",
+	})
 	var userDataDir string
 	if envDir := strings.TrimSpace(os.Getenv("OBU_USER_DATA_DIR")); envDir != "" {
 		userDataDir = envDir
@@ -573,11 +591,20 @@ func (r *Relay) createCDPManager() (*cdp.Manager, error) {
 		extID, instID, err := r.getExtensionInfo(infoCtx)
 		cancel()
 		if err != nil {
+			diaglog.Event("direct_cdp_initialization_failed", map[string]any{
+				"reason": "exact_profile_resolution_failed",
+				"error":  err.Error(),
+			})
 			return nil, fmt.Errorf("query extension info for exact profile resolution: %w", err)
 		}
 
 		_, _, _, _, _, root, ok := cdp.ResolveProfileForInstanceID(extID, instID)
 		if !ok || root == "" {
+			diaglog.Event("direct_cdp_initialization_failed", map[string]any{
+				"reason":      "exact_profile_root_not_found",
+				"extensionID": extID,
+				"instanceID":  instID,
+			})
 			return nil, fmt.Errorf("could not resolve exact profile root for extension %s (instance %s); no default guessing allowed", extID, instID)
 		}
 		userDataDir = root
@@ -585,6 +612,11 @@ func (r *Relay) createCDPManager() (*cdp.Manager, error) {
 
 	portInfo, err := cdp.ReadDevToolsActivePort(userDataDir)
 	if err != nil {
+		diaglog.Event("direct_cdp_initialization_failed", map[string]any{
+			"reason":     "devtools_active_port_unavailable",
+			"profileDir": userDataDir,
+			"error":      err.Error(),
+		})
 		return nil, fmt.Errorf("read DevToolsActivePort in %s: %w", userDataDir, err)
 	}
 
@@ -599,9 +631,20 @@ func (r *Relay) createCDPManager() (*cdp.Manager, error) {
 	// for its per-session approval. The relay owns one patient pending
 	// connection; individual caller deadlines only bound how long callers wait.
 	if err := mgr.Connect(context.Background()); err != nil {
+		diaglog.Event("direct_cdp_connect_failed", map[string]any{
+			"reason":     "browser_root_websocket_connect_failed",
+			"profileDir": userDataDir,
+			"wsURL":      portInfo.WebSocketURL(),
+			"error":      err.Error(),
+		})
 		return nil, fmt.Errorf("connect direct CDP at %s: %w", portInfo.WebSocketURL(), err)
 	}
 	r.logger.Info("direct CDP connected for profile", "dir", userDataDir, "ws", portInfo.WebSocketURL())
+	diaglog.Event("direct_cdp_connected", map[string]any{
+		"reason":     "direct_cdp_manager_initialized",
+		"profileDir": userDataDir,
+		"wsURL":      portInfo.WebSocketURL(),
+	})
 	return mgr, nil
 }
 

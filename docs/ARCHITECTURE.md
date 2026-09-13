@@ -86,7 +86,7 @@ upper-layer runtime / CLI / Python prelude
 - **精确 Target 映射**：扩展端暴露窄作用域 RPC `getTargetMapping({ session_id, turn_id, tabId })`，验证 ownership 并重载 discarded 页面后，直接读取 `chrome.debugger.getTargets()` 返回精确 `targetId`，严禁跨 profile 进行 URL/title 猜测。
 - **生命周期与清理**：`releaseTabs`、`closeUserTab`、`finalizeTabs`、`turnEnded` 会同步回收 Direct CDP 关联 session 并执行 `Target.detachFromTarget`，保持与扩展端所有权一致。
 - **单一 patient Browser 连接**：personal Chrome 可以把 Browser WebSocket 的 HTTP Upgrade 停在远程调试授权弹窗上。Host 对这条本地 Browser Root 握手不设置 transport-local handshake timeout，并在 daemon 范围只保留一个 pending 初始化；某个 caller deadline 到期只停止该 caller 的等待，不取消共享握手，也不创建第二个授权弹窗。批准后后续 task 复用同一 Browser Root 连接；Chrome 重启/连接断开后再懒加载重建。
-- **macOS 客户端授权助手**：Accessibility 不在 native host 内执行。CLI / Python launcher 在 Direct-capable 请求已经写入 socket 后启动隐藏 `__mac-approve` helper，通过 `System Events -> Google Chrome -> windows -> sheets` 精确匹配 `Allow remote debugging?` / `要允许远程调试吗？`，只按 `Allow` / `允许`；批准后 best-effort 收起 automation banner，明确拒绝“在设置中关闭”/`Disable in settings`。这样避免把 TCC 权限绑定到频繁重建的 native-host binary。
+- **macOS 客户端授权助手**：Accessibility 不在 native host 内执行。CLI / Python launcher 在 Direct-capable 请求已经写入 socket 后启动隐藏 `__mac-approve` helper，通过 `System Events -> Google Chrome -> windows -> sheets` 精确匹配 `Allow remote debugging?` / `要允许远程调试吗？`，只按 `Allow` / `允许`；批准后启动独立的嵌入式 AppleScript helper，遍历 Chrome 窗口的完整 Accessibility tree 并通过 `AXPress` 收起 automation banner，明确拒绝“在设置中关闭”/`Disable in settings`。这样避免把 TCC 权限绑定到频繁重建的 native-host binary。
 
 Chrome native messaging host name 固定为：
 

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/ifuryst/open-browser-use/internal/diaglog"
 	"github.com/spf13/cobra"
 )
 
@@ -19,9 +21,14 @@ func newMacApprovalCommand() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			reason := os.Getenv("OBU_MAC_APPROVAL_REASON")
+			diaglog.Event("mac_approval_helper_started", map[string]any{
+				"reason":    reason,
+				"parentPID": os.Getenv("OBU_MAC_APPROVAL_PARENT_PID"),
+			})
 			ctx, cancel := context.WithTimeout(cmd.Context(), 12*time.Second)
 			defer cancel()
-			return runMacRemoteDebuggingUIHelper(ctx)
+			return runMacRemoteDebuggingUIHelper(ctx, reason)
 		},
 	}
 }
@@ -32,6 +39,11 @@ func newMacBannerCommand() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			reason := os.Getenv("OBU_MAC_APPROVAL_REASON")
+			diaglog.Event("mac_banner_helper_started", map[string]any{
+				"reason":    reason,
+				"parentPID": os.Getenv("OBU_MAC_APPROVAL_PARENT_PID"),
+			})
 			ctx, cancel := context.WithTimeout(cmd.Context(), 6*time.Second)
 			defer cancel()
 			return runMacRemoteDebuggingBannerHelper(ctx)
@@ -59,10 +71,13 @@ func requestMayNeedDirectCDPApproval(method string, params map[string]any) bool 
 	}
 }
 
-func startMacRemoteDebuggingUIHelper() {
+func startMacRemoteDebuggingUIHelper(reason string) {
+	diaglog.Event("mac_approval_helper_requested", map[string]any{
+		"reason": reason,
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	go func() {
 		defer cancel()
-		_ = runMacRemoteDebuggingUIHelper(ctx)
+		_ = runMacRemoteDebuggingUIHelper(ctx, reason)
 	}()
 }

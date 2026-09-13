@@ -102,6 +102,7 @@ func scriptSubprocessEnv(options socketOptions, socketPath string, socketErr err
 	scriptEnv := []string{
 		fmt.Sprintf("OBU_SCRIPT_TIMEOUT_SECONDS=%g", timeout.Seconds()),
 		"OBU_SCRIPT_SOCKET_ERROR=",
+		fmt.Sprintf("OBU_MAC_APPROVAL_PARENT_PID=%d", os.Getpid()),
 	}
 	if executable, err := os.Executable(); err == nil && executable != "" {
 		scriptEnv = append(scriptEnv, "OBU_MAC_APPROVE_HELPER="+executable)
