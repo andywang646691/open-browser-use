@@ -163,7 +163,7 @@ func newHostCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socketDir, "socket-dir", host.DefaultSocketDir, "directory for SDK Unix sockets")
 	cmd.Flags().StringVar(&socketPath, "socket-path", "", "explicit SDK Unix socket path")
-	cmd.Flags().StringVar(&cdpMode, "cdp-mode", "", "CDP transport mode: direct|auto|extension (default direct)")
+	cmd.Flags().StringVar(&cdpMode, "cdp-mode", "", "CDP transport mode: direct|auto|extension (default extension)")
 	return cmd
 }
 
@@ -2469,7 +2469,7 @@ func applySessionDefaults(params map[string]any, sessionID string) {
 		}
 	}
 	if _, ok := params["_cdpMode"]; !ok {
-		params["_cdpMode"] = strings.TrimSpace(strings.ToLower(envValue("OBU_CDP_MODE", "direct")))
+		params["_cdpMode"] = strings.TrimSpace(strings.ToLower(envValue("OBU_CDP_MODE", "extension")))
 	}
 }
 

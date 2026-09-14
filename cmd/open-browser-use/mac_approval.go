@@ -14,7 +14,10 @@ func requestMayNeedDirectCDPApproval(method string, params map[string]any) bool 
 		mode = strings.ToLower(strings.TrimSpace(value))
 	}
 	if mode == "" {
-		mode = strings.ToLower(strings.TrimSpace(envValue("OBU_CDP_MODE", "")))
+		mode = strings.ToLower(strings.TrimSpace(envValue("OBU_CDP_MODE", "extension")))
+	}
+	if mode == "" {
+		mode = "extension"
 	}
 	if mode == "extension" {
 		return false

@@ -82,7 +82,7 @@ Planned hardening includes client tokens, peer validation, safer stale-socket ha
 
 ## Direct CDP Transport Security
 
-When Direct CDP is enabled (`OBU_CDP_MODE=direct` by default, or explicitly `auto`; use `extension` to opt out):
+When Direct CDP is enabled (`OBU_CDP_MODE=direct` or explicitly `auto`; the default is `extension`):
 
 - **Strict Loopback Restriction**: Direct WebSocket connections are strictly constrained to loopback addresses (`127.0.0.1`, `[::1]`, or `localhost`). Remote hosts and non-loopback IP addresses are rejected before dialing.
 - **Port File Sanitization**: `DevToolsActivePort` parsed paths are validated to ensure they start with `/devtools/` and contain no CRLF injection, control characters, or path traversal (`..`). Ports are strictly parsed as 1-65535 uint16.

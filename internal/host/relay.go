@@ -30,7 +30,7 @@ var DefaultSocketDir = defaultSocketDir()
 type Config struct {
 	SocketDir  string
 	SocketPath string
-	CDPMode    string // "auto", "direct", "extension"
+	CDPMode    string // "auto", "direct", "extension" (default "extension")
 	Logger     *slog.Logger
 }
 
@@ -89,7 +89,7 @@ func NewRelay(config Config, stdin io.Reader, stdout io.Writer) *Relay {
 		mode = strings.TrimSpace(strings.ToLower(os.Getenv("OBU_CDP_MODE")))
 	}
 	if mode == "" {
-		mode = "direct"
+		mode = "extension"
 	}
 	return &Relay{
 		config:     config,

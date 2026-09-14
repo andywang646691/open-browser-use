@@ -17,11 +17,11 @@ import (
 	"github.com/ifuryst/open-browser-use/internal/wire"
 )
 
-func TestNewRelayDefaultsToDirectCDP(t *testing.T) {
+func TestNewRelayDefaultsToExtensionCDP(t *testing.T) {
 	t.Setenv("OBU_CDP_MODE", "")
 	relay := NewRelay(Config{}, strings.NewReader(""), io.Discard)
-	if relay.cdpMode != "direct" {
-		t.Fatalf("expected default CDP mode direct, got %q", relay.cdpMode)
+	if relay.cdpMode != "extension" {
+		t.Fatalf("expected default CDP mode extension, got %q", relay.cdpMode)
 	}
 }
 

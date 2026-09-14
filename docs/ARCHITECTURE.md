@@ -79,9 +79,9 @@ upper-layer runtime / CLI / Python prelude
 ### CDP 传输层与模式选择
 
 - **模式选择**：由 `OBU_CDP_MODE=auto|direct|extension` 环境变量及 hidden 参数 `_cdpMode` 控制。
-  - `direct`（默认）：强制使用 Direct CDP。若 `DevToolsActivePort` 缺失、不可达或目标无法附加，直接报错失败，不隐式退化。
+  - `extension`（默认）：使用既有扩展端 CDP；不主动建立 Direct CDP Browser Root 连接。
+  - `direct`：强制使用 Direct CDP。若 `DevToolsActivePort` 缺失、不可达或目标无法附加，直接报错失败，不隐式退化。
   - `auto`：显式选择时，如果所选 Chrome 实例暴露了可用的 `DevToolsActivePort` 且 Root WebSocket 连通，优先使用 Direct CDP；不可用时自动降级至扩展端 CDP。
-  - `extension`：强制使用既有扩展端 CDP（保留完整 `chrome.debugger` 链路不变）。
 - **路由绑定一致性**：在 `auto` 模式下，标签页首次 `attach`（或懒加载 `executeCdp`）为该 `(session_id, tabId)` 选定并记录路由；后续同一 attachment 的命令与 detach 恒走同一路由，杜绝双重附加冲突。
 - **精确 Target 映射**：扩展端暴露窄作用域 RPC `getTargetMapping({ session_id, turn_id, tabId })`，验证 ownership 并重载 discarded 页面后，直接读取 `chrome.debugger.getTargets()` 返回精确 `targetId`，严禁跨 profile 进行 URL/title 猜测。
 - **生命周期与清理**：`releaseTabs`、`closeUserTab`、`finalizeTabs`、`turnEnded` 会同步回收 Direct CDP 关联 session 并执行 `Target.detachFromTarget`，保持与扩展端所有权一致。

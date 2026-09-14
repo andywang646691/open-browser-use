@@ -10,7 +10,7 @@
   - 扩展端新增窄作用域精确 `tabId <-> targetId` 映射 RPC（基于 `chrome.debugger.getTargets()` 无需 attach，不使用 URL/title 启发式）。
   - 保留扩展端现有 `attach`、`detach`、`executeCdp`、`onCDPEvent` 逻辑与测试不变作为 fallback。
   - Go native host 拦截 CDP 相关 JSON-RPC（`attach`, `detach`, `executeCdp`）。
-  - 支持 `OBU_CDP_MODE=auto|direct|extension` 配置与环境变量（默认 `auto`）。
+  - 支持 `OBU_CDP_MODE=auto|direct|extension` 配置与环境变量（当前默认 `extension`；Direct CDP 需显式选择）。
   - 解析指定 browser/profile 的 user-data-dir 中的 `DevToolsActivePort`，建立 Root Browser WebSocket 连接。
   - 多 profile 安全：通过该 profile 的扩展实例获取精确 tabId->targetId，防止跨 profile 误连。
   - Session / Target 管理：Target.attachToTarget(flatten=true) 懒加载会话、Target.detachFromTarget 精准收尾。
@@ -73,7 +73,7 @@
 
 - [x] 里程碑 1：扩展端精确映射 RPC（`getTargetMapping`，要求 session_id/turn_id/tabId，返回 `{ tabId, targetId }`，无跨 profile 枚举）
 - [x] 里程碑 2：Native Host Direct CDP 引擎（`internal/cdp`，DevToolsActivePort 解析、WebSocket 客户端、Target 多路复用与事件路由、迟到 Attach 自动 detach 回收）
-- [x] 里程碑 3：模式选择与降级（`OBU_CDP_MODE=auto|direct|extension`，CLI / Python 隐式传递 `_cdpMode`，per-attachment route 锁定，exact profile 定位拒绝默认回落）
+- [x] 里程碑 3：模式选择与降级（`OBU_CDP_MODE=auto|direct|extension`，默认 `extension`；CLI / Python 隐式传递 `_cdpMode`，per-attachment route 锁定，exact profile 定位拒绝默认回落）
 - [x] 里程碑 4：macOS launcher-side `mac-approve`（System Events 精确 Chrome sheet、Allow/允许、中英文支持、安全 banner dismiss）+ daemon-wide patient Browser handshake；native host 不承担 Accessibility。
 - [x] 里程碑 5：测试覆盖（覆盖模式选择/降级、精准映射、超时隔离、迟到 attach detach、事件转发、断连清理、client approval、单一 pending handshake）并完成 Direct/Extension 双路真实 Chrome E2E。
 - [x] 里程碑 6：文档与 CI（ARCHITECTURE/RELIABILITY/SECURITY 已更新，沉淀 history 并通过 `make ci`）

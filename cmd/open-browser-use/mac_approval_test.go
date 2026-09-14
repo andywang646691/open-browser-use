@@ -21,6 +21,13 @@ func TestMacApprovalAppleScript(t *testing.T) {
 }
 
 func TestRequestMayNeedDirectCDPApproval(t *testing.T) {
+	t.Run("defaults to extension without mode", func(t *testing.T) {
+		t.Setenv("OBU_CDP_MODE", "")
+		if requestMayNeedDirectCDPApproval("attach", map[string]any{}) {
+			t.Fatal("unset CDP mode should use extension without starting the approval helper")
+		}
+	})
+
 	t.Run("direct attach", func(t *testing.T) {
 		if !requestMayNeedDirectCDPApproval("attach", map[string]any{"_cdpMode": "direct"}) {
 			t.Fatal("direct attach should start the macOS approval helper")

@@ -104,7 +104,7 @@ def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
     global _MAC_APPROVAL_PROC
     if sys.platform != "darwin" or not _MAC_APPROVAL_HELPER:
         return
-    mode = (cdp_mode or "direct").strip().lower()
+    mode = (cdp_mode or "extension").strip().lower()
     if mode == "extension":
         return
     if method not in {
@@ -158,7 +158,7 @@ def _request(method, params=None):
     request["params"].setdefault("turn_id", _TURN_ID)
     if _WINDOW_MODE:
         request["params"].setdefault("window_mode", _WINDOW_MODE)
-    cdp_mode = os.environ.get("OBU_CDP_MODE", "direct").strip().lower()
+    cdp_mode = os.environ.get("OBU_CDP_MODE", "extension").strip().lower()
     if cdp_mode:
         request["params"].setdefault("_cdpMode", cdp_mode)
     # Local absolute deadline lets the extension reject an expired queued

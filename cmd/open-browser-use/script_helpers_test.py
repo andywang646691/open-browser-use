@@ -149,11 +149,11 @@ class PreludeTest(unittest.TestCase):
         self.assertEqual(request["params"]["session_id"], "test-session")
         self.assertTrue(request["params"]["turn_id"].startswith("test-session-"))
 
-    def test_cdp_mode_defaults_to_direct(self):
+    def test_cdp_mode_defaults_to_extension(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.sh.tabs()
             request = self.last("getTabs")
-            self.assertEqual(request["params"].get("_cdpMode"), "direct")
+            self.assertEqual(request["params"].get("_cdpMode"), "extension")
 
     def test_cdp_mode_propagated_from_env(self):
         with mock.patch.dict(os.environ, {"OBU_CDP_MODE": "extension"}):
