@@ -89,7 +89,7 @@ func NewRelay(config Config, stdin io.Reader, stdout io.Writer) *Relay {
 		mode = strings.TrimSpace(strings.ToLower(os.Getenv("OBU_CDP_MODE")))
 	}
 	if mode == "" {
-		mode = "auto"
+		mode = "direct"
 	}
 	return &Relay{
 		config:     config,

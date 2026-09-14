@@ -1704,12 +1704,12 @@ func readManifestFromZIP(path string) ([]byte, error) {
 }
 
 func TestApplySessionDefaultsCDPMode(t *testing.T) {
-	t.Run("default empty when env unset", func(t *testing.T) {
+	t.Run("defaults to direct when env unset", func(t *testing.T) {
 		t.Setenv("OBU_CDP_MODE", "")
 		params := map[string]any{}
 		applySessionDefaults(params, "test-sess")
-		if _, ok := params["_cdpMode"]; ok {
-			t.Errorf("expected no _cdpMode when env unset, got %v", params["_cdpMode"])
+		if params["_cdpMode"] != "direct" {
+			t.Errorf("expected _cdpMode = direct when env unset, got %v", params["_cdpMode"])
 		}
 	})
 

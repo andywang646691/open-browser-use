@@ -24,6 +24,13 @@ binary_path="${install_dir}/open-browser-use"
 mkdir -p "${install_dir}"
 (cd "${repo_root}" && go build -o "${binary_path}" ./cmd/open-browser-use)
 
+# macOS Accessibility only belongs to this stable, signed helper identity.
+# The CLI invokes it by path; it never asks /usr/bin/osascript or the native
+# host to own the permission.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  "${repo_root}/scripts/build-mac-approval-helper.sh"
+fi
+
 # npm link 的启动器执行仓库包内的二进制，而不是 ~/.local/bin。
 # 只更新当前仓库/平台，不覆盖其他全局 npm 包。
 goos="$(go env GOOS)"

@@ -31,7 +31,7 @@ _TURN_ID = "{}-{}".format(_SESSION_ID, time.time_ns())
 _WINDOW_MODE = os.environ.get("OBU_WINDOW_MODE", "")
 _SOCKET_PATH = os.environ.get("OBU_SCRIPT_SOCKET", "")
 _SOCKET_ERROR = os.environ.get("OBU_SCRIPT_SOCKET_ERROR", "")
-_MAC_APPROVAL_HELPER = os.environ.get("OBU_MAC_APPROVE_HELPER", "")
+_MAC_APPROVAL_HELPER = os.environ.get("OBU_MAC_APPROVAL_HELPER", "") or os.environ.get("OBU_MAC_APPROVE_HELPER", "")
 _MAC_APPROVAL_PROC = None
 _CONN = None
 _CURRENT_TAB = None
@@ -104,7 +104,7 @@ def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
     global _MAC_APPROVAL_PROC
     if sys.platform != "darwin" or not _MAC_APPROVAL_HELPER:
         return
-    mode = (cdp_mode or "auto").strip().lower()
+    mode = (cdp_mode or "direct").strip().lower()
     if mode == "extension":
         return
     if method not in {
@@ -121,7 +121,7 @@ def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
         )
         helper_env["OBU_MAC_APPROVAL_PARENT_PID"] = str(os.getpid())
         _MAC_APPROVAL_PROC = subprocess.Popen(
-            [_MAC_APPROVAL_HELPER, "__mac-approve"],
+            [_MAC_APPROVAL_HELPER, "approve"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -158,7 +158,7 @@ def _request(method, params=None):
     request["params"].setdefault("turn_id", _TURN_ID)
     if _WINDOW_MODE:
         request["params"].setdefault("window_mode", _WINDOW_MODE)
-    cdp_mode = os.environ.get("OBU_CDP_MODE", "").strip().lower()
+    cdp_mode = os.environ.get("OBU_CDP_MODE", "direct").strip().lower()
     if cdp_mode:
         request["params"].setdefault("_cdpMode", cdp_mode)
     # Local absolute deadline lets the extension reject an expired queued

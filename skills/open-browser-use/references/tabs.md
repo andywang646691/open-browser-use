@@ -23,9 +23,10 @@ page in the background and wakes a resident frozen page without activating or
 reloading it. A readiness timeout stops the caller before its requested CDP
 action. The ownership stays tracked; check the release report rather than
 opening replacement tabs or assuming a socket timeout means nothing happened.
-CDP transport mode defaults to `OBU_CDP_MODE=auto` (direct CDP via browser root
-WebSocket when a DevToolsActivePort is available, automatically falling back to
-extension-mediated CDP; set `OBU_CDP_MODE=extension` or `direct` to force a specific mode).
+CDP transport mode defaults to `OBU_CDP_MODE=direct` (direct CDP via browser root
+WebSocket; unavailable Direct CDP is an explicit error). Use `OBU_CDP_MODE=auto`
+to opt into automatic fallback to extension-mediated CDP, or
+`OBU_CDP_MODE=extension` to force the extension route.
 
 At a new turn, claim again and inspect: the user or another task may have
 changed the page. Ownership spans multiple `obu exec` scripts in one browser

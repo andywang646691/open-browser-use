@@ -149,11 +149,17 @@ class PreludeTest(unittest.TestCase):
         self.assertEqual(request["params"]["session_id"], "test-session")
         self.assertTrue(request["params"]["turn_id"].startswith("test-session-"))
 
-    def test_cdp_mode_propagated_from_env(self):
-        with mock.patch.dict(os.environ, {"OBU_CDP_MODE": "direct"}):
+    def test_cdp_mode_defaults_to_direct(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
             self.sh.tabs()
             request = self.last("getTabs")
             self.assertEqual(request["params"].get("_cdpMode"), "direct")
+
+    def test_cdp_mode_propagated_from_env(self):
+        with mock.patch.dict(os.environ, {"OBU_CDP_MODE": "extension"}):
+            self.sh.tabs()
+            request = self.last("getTabs")
+            self.assertEqual(request["params"].get("_cdpMode"), "extension")
 
     def test_direct_attach_starts_mac_approval_helper(self):
         proc = mock.Mock()
@@ -164,7 +170,7 @@ class PreludeTest(unittest.TestCase):
              mock.patch.object(self.sh.subprocess, "Popen", return_value=proc) as popen:
             self.sh._maybe_start_mac_remote_debugging_approval("attach", "direct")
         popen.assert_called_once()
-        self.assertEqual(popen.call_args.args[0], ["/tmp/open-browser-use", "__mac-approve"])
+        self.assertEqual(popen.call_args.args[0], ["/tmp/open-browser-use", "approve"])
 
     def test_extension_mode_never_starts_mac_approval_helper(self):
         self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use"

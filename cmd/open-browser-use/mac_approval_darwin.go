@@ -4,10 +4,10 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,25 +15,70 @@ import (
 	"github.com/ifuryst/open-browser-use/internal/diaglog"
 )
 
-//go:embed mac_approve.applescript
-var macApproveAppleScript string
+const macApprovalHelperExecutable = "open-browser-use-mac-approval-helper"
 
-//go:embed mac_dismiss_banner.applescript
-var macDismissBannerAppleScript string
+func macApprovalHelperEnvValue() string {
+	if path := strings.TrimSpace(os.Getenv("OBU_MAC_APPROVAL_HELPER")); path != "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, "Library", "Application Support", "OpenBrowserUse", "approval-helper", "Open Browser Use Approval Helper.app", "Contents", "MacOS", macApprovalHelperExecutable)
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
+func macApprovalHelperPath() (string, error) {
+	path := macApprovalHelperEnvValue()
+	if path == "" {
+		return "", fmt.Errorf("cannot determine macOS approval helper path")
+	}
+	return path, nil
+}
 
 func runMacRemoteDebuggingUIHelper(ctx context.Context, reason string) error {
+	helper, err := macApprovalHelperPath()
+	if err != nil {
+		return fmt.Errorf("resolve macOS approval helper: %w", err)
+	}
+	diaglog.Event("mac_approval_helper_resolved", map[string]any{
+		"path":   helper,
+		"reason": reason,
+	})
 	diaglog.Event("mac_approval_helper_started", map[string]any{
+		"path":      helper,
 		"reason":    reason,
 		"parentPID": os.Getenv("OBU_MAC_APPROVAL_PARENT_PID"),
 	})
+
 	for ctx.Err() == nil {
 		attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		cmd := exec.CommandContext(attemptCtx, "/usr/bin/osascript")
-		cmd.Stdin = strings.NewReader(macApproveAppleScript)
+		cmd := exec.CommandContext(attemptCtx, helper, "approve")
 		output, err := cmd.CombinedOutput()
 		cancel()
-		if err != nil {
+		if err == nil {
+			diaglog.Event("mac_approval_sheet_clicked", map[string]any{
+				"path":   helper,
+				"reason": reason,
+			})
+			startMacRemoteDebuggingBannerHelper(reason)
+			return nil
+		}
+		if isApprovalHelperPermissionDenied(err) {
+			diaglog.Event("mac_approval_permission_denied", map[string]any{
+				"path":   helper,
+				"reason": reason,
+				"error":  strings.TrimSpace(string(output)),
+			})
+			return fmt.Errorf("macOS Accessibility permission is required for %s; the helper opened System Settings and highlighted itself", helper)
+		}
+		if !isApprovalHelperNotFound(err) {
 			diaglog.Event("mac_approval_probe_failed", map[string]any{
+				"path":   helper,
 				"reason": reason,
 				"error":  err.Error(),
 				"output": strings.TrimSpace(string(output)),
@@ -41,40 +86,11 @@ func runMacRemoteDebuggingUIHelper(ctx context.Context, reason string) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// Accessibility permission may be granted while this helper is
-			// running. Keep polling instead of failing the browser request on a
-			// transient -25211 from System Events.
-			if strings.Contains(string(output), "-25211") || strings.Contains(string(output), "不允许辅助访问") {
-				timer := time.NewTimer(250 * time.Millisecond)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return ctx.Err()
-				case <-timer.C:
-				}
-				continue
-			}
-			return fmt.Errorf("macOS remote-debugging approval helper failed: %w (%s)", err, strings.TrimSpace(string(output)))
-		}
-		result := strings.TrimSpace(string(output))
-		switch result {
-		case "ready":
-			diaglog.Event("mac_approval_sheet_clicked", map[string]any{
-				"reason": reason,
-			})
-			startMacRemoteDebuggingBannerHelper(reason)
-			return nil
-		case "not-found":
-			// The browser-root WebSocket is intentionally allowed to remain
-			// pending while Chrome creates the per-session approval sheet.
-		default:
-			diaglog.Event("mac_approval_unexpected_result", map[string]any{
-				"reason": reason,
-				"result": result,
-			})
-			return fmt.Errorf("unexpected macOS remote-debugging approval result: %q", result)
+			return fmt.Errorf("macOS approval helper failed: %w (%s)", err, strings.TrimSpace(string(output)))
 		}
 
+		// Exit status 1 means that the helper is healthy but the sheet has not
+		// appeared yet. Keep the one patient Browser Root handshake alive.
 		timer := time.NewTimer(120 * time.Millisecond)
 		select {
 		case <-ctx.Done():
@@ -96,18 +112,35 @@ func runMacRemoteDebuggingUIHelper(ctx context.Context, reason string) error {
 	return nil
 }
 
+func isApprovalHelperPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	return ok && exitErr.ExitCode() == 3
+}
+
+func isApprovalHelperNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	return ok && exitErr.ExitCode() == 1
+}
+
 func startMacRemoteDebuggingBannerHelper(reason string) {
 	if reason == "" {
 		reason = "remote_debugging_approval_clicked"
 	}
-	diaglog.Event("mac_banner_helper_requested", map[string]any{
-		"reason": reason,
-	})
-	executable, err := os.Executable()
-	if err != nil || executable == "" {
+	helper, err := macApprovalHelperPath()
+	if err != nil || helper == "" {
 		return
 	}
-	cmd := exec.Command(executable, macBannerHelperCommand)
+	diaglog.Event("mac_banner_helper_requested", map[string]any{
+		"path":   helper,
+		"reason": reason,
+	})
+	cmd := exec.Command(helper, "dismiss-banner")
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -117,30 +150,36 @@ func startMacRemoteDebuggingBannerHelper(reason string) {
 	)
 	if err := cmd.Start(); err != nil {
 		diaglog.Event("mac_banner_helper_start_failed", map[string]any{
+			"path":  helper,
 			"error": err.Error(),
 		})
 		return
 	}
 	diaglog.Event("mac_banner_helper_started", map[string]any{
-		"pid": cmd.Process.Pid,
+		"path": helper,
+		"pid":  cmd.Process.Pid,
 	})
 }
 
 func runMacRemoteDebuggingBannerHelper(ctx context.Context) error {
+	helper, err := macApprovalHelperPath()
+	if err != nil {
+		return err
+	}
 	for ctx.Err() == nil {
 		attemptCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
-		dismiss := exec.CommandContext(attemptCtx, "/usr/bin/osascript")
-		dismiss.Stdin = strings.NewReader(macDismissBannerAppleScript)
+		dismiss := exec.CommandContext(attemptCtx, helper, "dismiss-banner")
 		out, dismissErr := dismiss.CombinedOutput()
 		cancel()
-		if dismissErr == nil && strings.TrimSpace(string(out)) == "dismissed" {
+		if dismissErr == nil {
 			diaglog.Event("mac_banner_dismissed", map[string]any{
 				"reason": os.Getenv("OBU_MAC_APPROVAL_REASON"),
 			})
 			return nil
 		}
-		if dismissErr != nil {
+		if !isApprovalHelperNotFound(dismissErr) {
 			diaglog.Event("mac_banner_probe_failed", map[string]any{
+				"path":   helper,
 				"error":  dismissErr.Error(),
 				"output": strings.TrimSpace(string(out)),
 			})

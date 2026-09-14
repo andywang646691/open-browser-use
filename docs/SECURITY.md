@@ -82,12 +82,12 @@ Planned hardening includes client tokens, peer validation, safer stale-socket ha
 
 ## Direct CDP Transport Security
 
-When Direct CDP is enabled (`OBU_CDP_MODE=auto|direct`):
+When Direct CDP is enabled (`OBU_CDP_MODE=direct` by default, or explicitly `auto`; use `extension` to opt out):
 
 - **Strict Loopback Restriction**: Direct WebSocket connections are strictly constrained to loopback addresses (`127.0.0.1`, `[::1]`, or `localhost`). Remote hosts and non-loopback IP addresses are rejected before dialing.
 - **Port File Sanitization**: `DevToolsActivePort` parsed paths are validated to ensure they start with `/devtools/` and contain no CRLF injection, control characters, or path traversal (`..`). Ports are strictly parsed as 1-65535 uint16.
 - **Profile Boundary Isolation**: Because a single Chrome instance may host multiple profiles whose targets are all visible via root CDP, `getTargetMapping` must be answered by that profile's own extension instance verifying tab ownership. The host never guesses targets using URL or title across profiles.
-- **macOS Approval Boundary**: Accessibility automation runs only from the CLI/launcher-side hidden helper, never inside the Chrome native-messaging host. It inspects Chrome `windows -> sheets`, matches only the remote-debugging consent sheet, and presses only exact `Allow` / `允许`. After approval, the embedded AppleScript banner helper traverses the complete Chrome Accessibility tree and presses only the infobar close control; any control containing `设置`, `setting`, `disable`, or `turn off` is rejected. Approval and reconnect diagnostics are written locally with mode, PID, session/turn, and reason; no page content or credentials are logged. The helper relies on normal user-granted macOS Accessibility permission and does not bypass TCC.
+- **macOS Approval Boundary**: Accessibility automation runs only from the stable, separately installed and code-signed `Open Browser Use Approval Helper.app`, never inside the CLI, Python launcher, Chrome native-messaging host, or Chrome. On first use it calls `AXIsProcessTrustedWithOptions` with the system prompt option; macOS displays its own Accessibility authorization prompt, but the user must still explicitly enable the helper in Privacy & Security > Accessibility. The helper inspects Chrome windows and sheets, matches only the remote-debugging consent sheet, and presses only exact `Allow` / `允许`; the same helper handles the infobar close control and rejects settings/disable controls. Users grant Accessibility permission only to this helper. Approval and reconnect diagnostics are written locally with mode, PID, session/turn, and reason; no page content or credentials are logged. The helper relies on normal user-granted macOS Accessibility permission and does not bypass TCC.
 
 ## Chrome Extension Permissions
 

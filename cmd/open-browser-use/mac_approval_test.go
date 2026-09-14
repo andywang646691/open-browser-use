@@ -1,6 +1,24 @@
 package main
 
-import "testing"
+import (
+	"os/exec"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func TestMacApprovalAppleScript(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-only AppleScript")
+	}
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not available")
+	}
+	cmd := exec.Command("clang", "-fsyntax-only", "-fobjc-arc", "-framework", "Cocoa", "-framework", "ApplicationServices", "../../scripts/macos/open-browser-use-mac-approval-helper.m")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("approval helper should compile: %v (%s)", err, strings.TrimSpace(string(output)))
+	}
+}
 
 func TestRequestMayNeedDirectCDPApproval(t *testing.T) {
 	t.Run("direct attach", func(t *testing.T) {

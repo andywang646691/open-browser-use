@@ -104,8 +104,8 @@ func scriptSubprocessEnv(options socketOptions, socketPath string, socketErr err
 		"OBU_SCRIPT_SOCKET_ERROR=",
 		fmt.Sprintf("OBU_MAC_APPROVAL_PARENT_PID=%d", os.Getpid()),
 	}
-	if executable, err := os.Executable(); err == nil && executable != "" {
-		scriptEnv = append(scriptEnv, "OBU_MAC_APPROVE_HELPER="+executable)
+	if helper := macApprovalHelperEnvValue(); helper != "" {
+		scriptEnv = append(scriptEnv, "OBU_MAC_APPROVAL_HELPER="+helper)
 	}
 	if options.sessionID != "" {
 		scriptEnv = append(scriptEnv, "OBU_SESSION_ID="+options.sessionID)
