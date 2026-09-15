@@ -49,8 +49,11 @@ turn, not the lifetime of a Python process and not the whole unfinished task.
   `✅ Open Browser Use` group. From an isolated task window it moves the result
   to an existing user window if available, without focusing it. Repeated marks
   converge on the same results group. Ownership is unchanged: release afterwards.
+  **A completed browser task must mark every owned tab that is itself a user-facing
+  result before calling `release_tabs()`; do not finish with release-only cleanup.**
   Do not mark a source page merely because it was read. For a research answer
-  delivered in chat, releasing the original source page is normally sufficient.
+  delivered in chat, releasing the original source page is normally sufficient;
+  when no owned tab is a user-facing result, record `no deliverable tab`.
 
 A completed task:
 

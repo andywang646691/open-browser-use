@@ -123,16 +123,21 @@ Before writing the final response, complete this sequence exactly once:
    tools. `memory_put()` only appends to `site-memory.lines`; it does not create
    technique or runbook files. A checkpoint is complete only when every chosen
    artifact exists and is readable, or the no-artifact decision is explicit.
-4. **Organize and release browser state.** While still owning the pages, call
-   `mark_deliverable(id)` only for pages that are themselves user-facing results,
-   not original source pages merely read for a chat answer. Use `close_tab(id)`
-   for your unneeded temporary pages. Do not close the user's original pages unless
-   requested. Keep unfinished pages simply by not closing them. Finally call
-   `release_tabs()` with no arguments to release all current ownership, even
-   when waiting for login, approval or another turn. Check `failed` and
-   `remaining`; cleanup is complete only when both are empty. Report partial
-   failures and explicitly retry failed releases if appropriate. After successful
-   release, do not use browser helpers again this turn; file work is allowed.
+4. **Organize and release browser state.** Once the requested result is verified,
+   always perform a deliverable pass before cleanup: while still owning the pages,
+   identify every tab that is itself a user-facing result and call
+   `mark_deliverable(id)` for each one. Do not finish a completed browser task by
+   calling only `release_tabs()`. Source-only pages that were merely read for a
+   chat answer are not deliverables and must not be marked. If no owned page is
+   itself a user-facing result, explicitly note `no deliverable tab` and continue.
+   Use `close_tab(id)` for your unneeded temporary pages. Do not close the user's
+   original pages unless requested. Keep unfinished pages simply by not closing
+   them. Finally call `release_tabs()` with no arguments to release all current
+   ownership, even when waiting for login, approval or another turn. Check
+   `failed` and `remaining`; cleanup is complete only when both are empty. Report
+   partial failures and explicitly retry failed releases if appropriate. After
+   successful release, do not use browser helpers again this turn; file work is
+   allowed.
 
 Use `kind="fail"` for a trap, `kind="surprise"` for unexpected structure, and
 `kind="tip"` sparingly for a hard-won positive pattern. `fail` and `surprise`
@@ -140,9 +145,10 @@ require an actionable `unlock`. Never persist credentials, cookies, passwords,
 private links, or routine success. Write a map of reusable site structure, not
 a task diary.
 
-**Done when:** persistence has been verified or explicitly ruled out, and
-all current tab ownership has been released successfully (or a cleanup failure
-has been explicitly reported).
+**Done when:** persistence has been verified or explicitly ruled out, every
+user-facing result tab has been marked with `mark_deliverable` (or `no
+deliverable tab` was recorded), and all current tab ownership has been released
+successfully (or a cleanup failure has been explicitly reported).
 
 ### 4. Report
 
