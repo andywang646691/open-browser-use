@@ -439,6 +439,83 @@ func (r *Relay) GetTargetMapping(ctx context.Context, sessionID, turnID string, 
 	}
 }
 
+// getSessionActiveTab asks the OBU extension for the session's logical active
+// tab. It is used by extension action triggering when the caller omits tabId;
+// the extension remains the authority for ownership and target visibility.
+func (r *Relay) getSessionActiveTab(ctx context.Context, sessionID, turnID string) (int, error) {
+	reqID := "obu:internal:tabs:" + strconv.FormatInt(r.nextReqID.Add(1), 10)
+	ch := make(chan map[string]any, 1)
+
+	r.extPendingMu.Lock()
+	r.extPending[reqID] = ch
+	r.extPendingMu.Unlock()
+	defer func() {
+		r.extPendingMu.Lock()
+		delete(r.extPending, reqID)
+		r.extPendingMu.Unlock()
+	}()
+
+	params := map[string]any{
+		"session_id": sessionID,
+		"turn_id":    turnID,
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		params["_deadlineUnixMs"] = deadline.UnixMilli()
+	}
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqID,
+		"method":  "getTabs",
+		"params":  params,
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return 0, err
+	}
+	if err := r.writeExtension(payload); err != nil {
+		return 0, fmt.Errorf("send getTabs to extension: %w", err)
+	}
+
+	select {
+	case response, ok := <-ch:
+		if !ok || response == nil {
+			return 0, errors.New("extension disconnected while awaiting getTabs")
+		}
+		if errObj, ok := response["error"].(map[string]any); ok {
+			message, _ := errObj["message"].(string)
+			return 0, fmt.Errorf("extension getTabs error: %s", message)
+		}
+		values, ok := response["result"].([]any)
+		if !ok {
+			return 0, errors.New("invalid getTabs response from extension")
+		}
+		activeTabID := 0
+		for _, raw := range values {
+			tab, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, idErr := toInt(tab["id"])
+			if idErr != nil || id <= 0 {
+				continue
+			}
+			active, _ := tab["active"].(bool)
+			if active {
+				if activeTabID != 0 && activeTabID != id {
+					return 0, errors.New("session has multiple active tabs; specify tabId explicitly")
+				}
+				activeTabID = id
+			}
+		}
+		if activeTabID <= 0 {
+			return 0, errors.New("session has no active tab; specify tabId explicitly")
+		}
+		return activeTabID, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
 func (r *Relay) getExtensionInfo(ctx context.Context) (extensionID, instanceID string, err error) {
 	reqID := "obu:internal:info:" + strconv.FormatInt(r.nextReqID.Add(1), 10)
 	ch := make(chan map[string]any, 1)
@@ -486,9 +563,9 @@ func (r *Relay) getExtensionInfo(ctx context.Context) (extensionID, instanceID s
 }
 
 func (r *Relay) ensureCDPManager(ctx context.Context) (*cdp.Manager, error) {
-	if r.cdpMode == "extension" {
-		return nil, errors.New("CDP mode is explicit extension")
-	}
+	// The Extensions CDP domain is browser-root-only and must remain available
+	// for extension lifecycle operations even when page CDP is configured to
+	// use the extension-mediated route.
 
 	r.cdpInitMu.Lock()
 	r.mu.Lock()
@@ -802,6 +879,115 @@ func (r *Relay) maybeHandleDirectCDP(client *clientConn, payload []byte) (bool, 
 			mgr.CleanSessionsForSession(reqCtx, sessionID, nil)
 		}
 		return false, nil
+	}
+
+	// Browser-root Extension domain commands are handled by Direct CDP. They
+	// intentionally do not go through the extension debugger because Chrome
+	// exposes extension lifecycle management only on the browser root.
+	switch method {
+	case "listExtensions":
+		mgr, err := r.ensureCDPManager(reqCtx)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("direct CDP is required for extension management: %w", err))
+			return true, nil
+		}
+		extensions, err := mgr.ListExtensions(reqCtx, 10*time.Second)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("list extensions: %w", err))
+			return true, nil
+		}
+		_ = client.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": extensions})
+		return true, nil
+
+	case "installExtension":
+		path, _ := params["path"].(string)
+		if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {
+			r.writeClientError(client, id, errors.New("installExtension requires an absolute unpacked extension path"))
+			return true, nil
+		}
+		mgr, err := r.ensureCDPManager(reqCtx)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("direct CDP is required for extension management: %w", err))
+			return true, nil
+		}
+		enableInIncognito, _ := params["enableInIncognito"].(bool)
+		extensionID, err := mgr.LoadUnpackedExtension(reqCtx, path, enableInIncognito, 30*time.Second)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("install extension: %w", err))
+			return true, nil
+		}
+		_ = client.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"id": extensionID}})
+		return true, nil
+
+	case "reloadExtension":
+		extensionID, _ := params["id"].(string)
+		if strings.TrimSpace(extensionID) == "" {
+			r.writeClientError(client, id, errors.New("reloadExtension requires an extension id"))
+			return true, nil
+		}
+		mgr, err := r.ensureCDPManager(reqCtx)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("direct CDP is required for extension management: %w", err))
+			return true, nil
+		}
+		reloadedID, err := mgr.ReloadExtension(reqCtx, extensionID, 30*time.Second)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("reload extension %q: %w", extensionID, err))
+			return true, nil
+		}
+		_ = client.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"id": reloadedID}})
+		return true, nil
+
+	case "uninstallExtension":
+		extensionID, _ := params["id"].(string)
+		if strings.TrimSpace(extensionID) == "" {
+			r.writeClientError(client, id, errors.New("uninstallExtension requires an extension id"))
+			return true, nil
+		}
+		mgr, err := r.ensureCDPManager(reqCtx)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("direct CDP is required for extension management: %w", err))
+			return true, nil
+		}
+		if err := mgr.UninstallExtension(reqCtx, extensionID, 30*time.Second); err != nil {
+			r.writeClientError(client, id, fmt.Errorf("uninstall extension %q: %w", extensionID, err))
+			return true, nil
+		}
+		_ = client.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"ok": true}})
+		return true, nil
+
+	case "triggerExtensionAction":
+		extensionID, _ := params["id"].(string)
+		if strings.TrimSpace(extensionID) == "" {
+			r.writeClientError(client, id, errors.New("triggerExtensionAction requires an extension id"))
+			return true, nil
+		}
+		tabID, tabErr := toInt(params["tabId"])
+		if tabErr != nil || tabID <= 0 {
+			if _, present := params["tabId"]; !present {
+				tabID, tabErr = r.getSessionActiveTab(reqCtx, sessionID, turnID)
+			}
+			if tabErr != nil || tabID <= 0 {
+				r.writeClientError(client, id, errors.New("triggerExtensionAction requires an owned positive tabId or a session with one active tab"))
+				return true, nil
+			}
+		}
+		mgr, err := r.ensureCDPManager(reqCtx)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("direct CDP is required for extension management: %w", err))
+			return true, nil
+		}
+		targetID, err := r.GetTargetMapping(reqCtx, sessionID, turnID, tabID)
+		if err != nil {
+			r.writeClientError(client, id, fmt.Errorf("resolve target for extension action: %w", err))
+			return true, nil
+		}
+		if err := mgr.TriggerExtensionAction(reqCtx, extensionID, targetID, 10*time.Second); err != nil {
+			r.writeClientError(client, id, fmt.Errorf("trigger extension action %q: %w", extensionID, err))
+			return true, nil
+		}
+		_ = client.writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"ok": true, "targetId": targetID}})
+		return true, nil
 	}
 
 	// Direct-route interception for attach, executeCdp, detach, clipboard, file chooser

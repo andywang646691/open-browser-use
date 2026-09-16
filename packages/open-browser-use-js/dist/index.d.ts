@@ -31,6 +31,13 @@ export type FinalizeKeepEntry = {
 export type CdpCommandResult = {
     [key: string]: JsonValue;
 };
+export type OpenBrowserUseExtensionInfo = {
+    id: string;
+    name: string;
+    version: string;
+    path: string;
+    enabled: boolean;
+};
 export type EvaluatePageFunction<A, T> = (args: A) => T | Promise<T>;
 export type EvaluateOptions = {
     awaitPromise?: boolean;
@@ -101,6 +108,15 @@ export declare class OpenBrowserUseClient {
     readClipboard(tabId: number): Promise<JsonValue>;
     writeClipboard(tabId: number, items: JsonValue[]): Promise<JsonValue>;
     turnEnded(): Promise<JsonValue>;
+    listExtensions(): Promise<OpenBrowserUseExtensionInfo[]>;
+    installExtension(path: string, enableInIncognito?: boolean): Promise<{
+        id: string;
+    }>;
+    reloadExtension(id: string): Promise<{
+        id: string;
+    }>;
+    triggerExtensionAction(id: string, tabId?: number): Promise<JsonValue>;
+    uninstallExtension(id: string): Promise<JsonValue>;
 }
 export declare function connectOpenBrowserUse(options: OpenBrowserUseBrowserOptions): Promise<OpenBrowserUseBrowser>;
 export declare class OpenBrowserUseBrowser {

@@ -1,5 +1,6 @@
 import { Socket, createConnection } from "node:net";
 import { endianness } from "node:os";
+import { isAbsolute } from "node:path";
 
 export type JsonValue =
   | null
@@ -52,6 +53,14 @@ export type FinalizeKeepEntry = {
 };
 
 export type CdpCommandResult = { [key: string]: JsonValue };
+
+export type OpenBrowserUseExtensionInfo = {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  enabled: boolean;
+};
 
 export type EvaluatePageFunction<A, T> = (args: A) => T | Promise<T>;
 
@@ -334,6 +343,35 @@ export class OpenBrowserUseClient {
 
   turnEnded(): Promise<JsonValue> {
     return this.request("turnEnded");
+  }
+
+  listExtensions(): Promise<OpenBrowserUseExtensionInfo[]> {
+    return this.request("listExtensions") as Promise<OpenBrowserUseExtensionInfo[]>;
+  }
+
+  installExtension(path: string, enableInIncognito = false): Promise<{ id: string }> {
+    if (!path || !isAbsolute(path)) {
+      throw new TypeError("installExtension path must be an absolute unpacked extension directory");
+    }
+    return this.request("installExtension", { path, enableInIncognito }) as Promise<{ id: string }>;
+  }
+
+  reloadExtension(id: string): Promise<{ id: string }> {
+    if (!id) throw new TypeError("reloadExtension requires an extension id");
+    return this.request("reloadExtension", { id }) as Promise<{ id: string }>;
+  }
+
+  triggerExtensionAction(id: string, tabId?: number): Promise<JsonValue> {
+    if (!id) throw new TypeError("triggerExtensionAction requires an extension id");
+    if (tabId !== undefined && (!Number.isInteger(tabId) || tabId <= 0)) {
+      throw new TypeError("triggerExtensionAction requires a positive tab id when provided");
+    }
+    return this.request("triggerExtensionAction", { id, ...(tabId === undefined ? {} : { tabId }) });
+  }
+
+  uninstallExtension(id: string): Promise<JsonValue> {
+    if (!id) throw new TypeError("uninstallExtension requires an extension id");
+    return this.request("uninstallExtension", { id });
   }
 
   #handleData(chunk: Buffer): void {

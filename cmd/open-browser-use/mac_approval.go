@@ -19,6 +19,13 @@ func requestMayNeedDirectCDPApproval(method string, params map[string]any) bool 
 	if mode == "" {
 		mode = "extension"
 	}
+	switch method {
+	case "listExtensions", "installExtension", "reloadExtension", "triggerExtensionAction", "uninstallExtension":
+		// Extension lifecycle commands always use the browser-root CDP
+		// Extensions domain, even when ordinary page CDP is configured to use
+		// the extension route.
+		return true
+	}
 	if mode == "extension" {
 		return false
 	}

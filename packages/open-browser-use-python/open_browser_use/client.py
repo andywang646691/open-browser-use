@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import struct
 import time
@@ -180,6 +181,37 @@ class OpenBrowserUseClient:
 
     def turn_ended(self) -> Any:
         return self.request("turnEnded")
+
+    def list_extensions(self) -> Any:
+        return self.request("listExtensions")
+
+    def install_extension(self, path: str, enable_in_incognito: bool = False) -> Any:
+        if not path or not os.path.isabs(path):
+            raise ValueError("install_extension path must be an absolute unpacked extension directory")
+        return self.request(
+            "installExtension",
+            {"path": path, "enableInIncognito": enable_in_incognito},
+        )
+
+    def reload_extension(self, extension_id: str) -> Any:
+        if not extension_id:
+            raise ValueError("reload_extension requires an extension id")
+        return self.request("reloadExtension", {"id": extension_id})
+
+    def trigger_extension_action(self, extension_id: str, tab_id: int | None = None) -> Any:
+        if not extension_id:
+            raise ValueError("trigger_extension_action requires an extension id")
+        if tab_id is not None and (not isinstance(tab_id, int) or isinstance(tab_id, bool) or tab_id <= 0):
+            raise ValueError("trigger_extension_action requires a positive tab id when provided")
+        return self.request(
+            "triggerExtensionAction",
+            {"id": extension_id, **({} if tab_id is None else {"tabId": tab_id})},
+        )
+
+    def uninstall_extension(self, extension_id: str) -> Any:
+        if not extension_id:
+            raise ValueError("uninstall_extension requires an extension id")
+        return self.request("uninstallExtension", {"id": extension_id})
 
 
 def connect_open_browser_use(

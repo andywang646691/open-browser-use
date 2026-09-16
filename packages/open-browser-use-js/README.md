@@ -222,6 +222,25 @@ await client.request("executeCdp", {
 });
 ```
 
+## Extension lifecycle
+
+Extension management uses Chrome's browser-root `Extensions.*` CDP domain and
+therefore requires a Chrome instance that exposes unpacked extension debugging
+(typically `OBU_CDP_MODE=direct` or `auto`, plus Chrome's unsafe extension
+debugging support). The five operations mirror the Extension category in
+Chrome DevTools MCP:
+
+```js
+const installed = await browser.client.listExtensions();
+const { id } = await browser.client.installExtension("/absolute/path/to/ext");
+await browser.client.reloadExtension(id);
+await browser.client.triggerExtensionAction(id, tab.id); // omit tab.id to use the session's active tab
+await browser.client.uninstallExtension(id);
+```
+
+Only unpacked extensions are supported. `triggerExtensionAction` requires an
+owned OBU session tab so the host can resolve its exact Chrome target safely.
+
 ## Notifications
 
 The JS SDK can subscribe to JSON-RPC notifications from the native socket. This

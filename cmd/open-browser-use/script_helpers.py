@@ -105,11 +105,16 @@ def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
     if sys.platform != "darwin" or not _MAC_APPROVAL_HELPER:
         return
     mode = (cdp_mode or "extension").strip().lower()
-    if mode == "extension":
+    extension_methods = {
+        "listExtensions", "installExtension", "reloadExtension",
+        "triggerExtensionAction", "uninstallExtension",
+    }
+    if mode == "extension" and method not in extension_methods:
         return
     if method not in {
         "attach", "executeCdp", "readClipboardText", "writeClipboardText",
         "readClipboard", "writeClipboard", "waitForFileChooser", "setFileChooserFiles",
+        *extension_methods,
     }:
         return
     if _MAC_APPROVAL_PROC is not None and _MAC_APPROVAL_PROC.poll() is None:
@@ -680,6 +685,60 @@ def wait_for_event(method, predicate=None, timeout=30.0):
     )
 
 
+def list_extensions():
+    """List unpacked Chrome extensions visible to the current browser root.
+
+    Returns objects with id, name, version, path, and enabled fields. This
+    requires a Chrome version and launch mode that expose the CDP Extensions
+    domain; it does not list Web Store extensions that Chrome does not expose
+    through that domain.
+    """
+    return _request("listExtensions")
+
+
+def install_extension(path, enable_in_incognito=False):
+    """Install an unpacked extension from an absolute local directory path.
+
+    Returns {"id": "..."}. Chrome's Extensions domain only supports unpacked
+    extensions and may require Direct CDP/unsafe extension debugging support.
+    """
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise ValueError("install_extension path must be an absolute unpacked extension directory")
+    return _request("installExtension", {
+        "path": path,
+        "enableInIncognito": bool(enable_in_incognito),
+    })
+
+
+def reload_extension(extension_id):
+    """Reload an installed unpacked extension by id and return its id."""
+    if not isinstance(extension_id, str) or not extension_id:
+        raise ValueError("reload_extension requires an extension id")
+    return _request("reloadExtension", {"id": extension_id})
+
+
+def trigger_extension_action(extension_id, tab_id=None):
+    """Trigger an extension's default action for an owned session tab.
+
+    tab_id may be a current session tab. When omitted, the host uses the
+    session's single logical active tab. The host resolves the exact Chrome
+    target id and never guesses from URL or title.
+    """
+    if not isinstance(extension_id, str) or not extension_id:
+        raise ValueError("trigger_extension_action requires an extension id")
+    params = {"id": extension_id}
+    if tab_id is not None:
+        params["tabId"] = _coerce_tab_id(tab_id, "trigger_extension_action")
+    return _request("triggerExtensionAction", params)
+
+
+def uninstall_extension(extension_id):
+    """Uninstall an unpacked extension by id and return the operation result."""
+    if not isinstance(extension_id, str) or not extension_id:
+        raise ValueError("uninstall_extension requires an extension id")
+    return _request("uninstallExtension", {"id": extension_id})
+
+
 def release_tabs(tab_ids=None):
     """Release ownership without closing or moving pages; omit ids for all owned tabs.
 
@@ -844,6 +903,11 @@ _HELPER_NAMES = [
     "close_tab",
     "release_tabs",
     "mark_deliverable",
+    "list_extensions",
+    "install_extension",
+    "reload_extension",
+    "trigger_extension_action",
+    "uninstall_extension",
 ]
 
 

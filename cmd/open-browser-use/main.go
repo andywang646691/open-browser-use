@@ -135,6 +135,11 @@ func newRootCommand() *cobra.Command {
 		newMarkDeliverableCommand(),
 		newNameSessionCommand(),
 		newCdpCommand(),
+		newInstallExtensionCommand(),
+		newListExtensionsCommand(),
+		newReloadExtensionCommand(),
+		newTriggerExtensionActionCommand(),
+		newUninstallExtensionCommand(),
 		newMoveMouseCommand(),
 		newWaitFileChooserCommand(),
 		newSetFileChooserFilesCommand(),
@@ -1390,6 +1395,112 @@ func newCdpCommand() *cobra.Command {
 	cmd.Flags().IntVar(&tabID, "tab-id", 0, "optional tab id target")
 	cmd.Flags().StringVar(&method, "method", "", "Chrome DevTools Protocol method")
 	cmd.Flags().StringVar(&commandParamsJSON, "params", "{}", "Chrome DevTools Protocol command params")
+	return cmd
+}
+
+func newInstallExtensionCommand() *cobra.Command {
+	var options socketOptions
+	var extensionPath string
+	var enableInIncognito bool
+	cmd := &cobra.Command{
+		Use:     "install-extension",
+		Aliases: []string{"install_extension"},
+		Short:   "Install an unpacked Chrome extension (Direct CDP)",
+		Args:    cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if strings.TrimSpace(extensionPath) == "" {
+				return errors.New("install-extension requires --path")
+			}
+			return invokeAndWrite(options, "installExtension", map[string]any{
+				"path":              extensionPath,
+				"enableInIncognito": enableInIncognito,
+			})
+		},
+	}
+	addSocketFlags(cmd, &options)
+	cmd.Flags().StringVar(&extensionPath, "path", "", "absolute path to an unpacked extension directory")
+	cmd.Flags().BoolVar(&enableInIncognito, "enable-in-incognito", false, "enable the extension in incognito windows")
+	return cmd
+}
+
+func newListExtensionsCommand() *cobra.Command {
+	var options socketOptions
+	cmd := &cobra.Command{
+		Use:     "list-extensions",
+		Aliases: []string{"list_extensions"},
+		Short:   "List installed unpacked Chrome extensions (Direct CDP)",
+		Args:    cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return invokeAndWrite(options, "listExtensions", map[string]any{})
+		},
+	}
+	addSocketFlags(cmd, &options)
+	return cmd
+}
+
+func newReloadExtensionCommand() *cobra.Command {
+	var options socketOptions
+	var extensionID string
+	cmd := &cobra.Command{
+		Use:     "reload-extension",
+		Aliases: []string{"reload_extension"},
+		Short:   "Reload an unpacked Chrome extension (Direct CDP)",
+		Args:    cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if strings.TrimSpace(extensionID) == "" {
+				return errors.New("reload-extension requires --id")
+			}
+			return invokeAndWrite(options, "reloadExtension", map[string]any{"id": extensionID})
+		},
+	}
+	addSocketFlags(cmd, &options)
+	cmd.Flags().StringVar(&extensionID, "id", "", "extension id")
+	return cmd
+}
+
+func newTriggerExtensionActionCommand() *cobra.Command {
+	var options socketOptions
+	var extensionID string
+	var tabID int
+	cmd := &cobra.Command{
+		Use:     "trigger-extension-action",
+		Aliases: []string{"trigger_extension_action"},
+		Short:   "Trigger an extension's default action (Direct CDP)",
+		Args:    cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if strings.TrimSpace(extensionID) == "" {
+				return errors.New("trigger-extension-action requires --id")
+			}
+			params := map[string]any{"id": extensionID}
+			if tabID > 0 {
+				params["tabId"] = tabID
+			}
+			return invokeAndWrite(options, "triggerExtensionAction", params)
+		},
+	}
+	addSocketFlags(cmd, &options)
+	cmd.Flags().StringVar(&extensionID, "id", "", "extension id")
+	cmd.Flags().IntVar(&tabID, "tab-id", 0, "optional owned target tab id; defaults to the session's active tab")
+	return cmd
+}
+
+func newUninstallExtensionCommand() *cobra.Command {
+	var options socketOptions
+	var extensionID string
+	cmd := &cobra.Command{
+		Use:     "uninstall-extension",
+		Aliases: []string{"uninstall_extension"},
+		Short:   "Uninstall an unpacked Chrome extension (Direct CDP)",
+		Args:    cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if strings.TrimSpace(extensionID) == "" {
+				return errors.New("uninstall-extension requires --id")
+			}
+			return invokeAndWrite(options, "uninstallExtension", map[string]any{"id": extensionID})
+		},
+	}
+	addSocketFlags(cmd, &options)
+	cmd.Flags().StringVar(&extensionID, "id", "", "extension id")
 	return cmd
 }
 

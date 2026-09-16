@@ -296,6 +296,50 @@ func mcpTools() []mcpTool {
 			}, []string{"method"}),
 		},
 		{
+			Name:        "list_extensions",
+			Title:       "List Installed Unpacked Extensions",
+			Description: "List unpacked Chrome extensions visible to the browser root CDP connection.",
+			InputSchema: emptyObjectSchema(),
+		},
+		{
+			Name:        "install_extension",
+			Title:       "Install Unpacked Extension",
+			Description: "Install an unpacked Chrome extension from an absolute local directory path.",
+			InputSchema: objectSchema(map[string]any{
+				"path": stringSchema("Absolute path to the unpacked extension directory."),
+				"enable_in_incognito": map[string]any{
+					"type":        "boolean",
+					"description": "Enable the extension in incognito windows.",
+					"default":     false,
+				},
+			}, []string{"path"}),
+		},
+		{
+			Name:        "reload_extension",
+			Title:       "Reload Unpacked Extension",
+			Description: "Reload an installed unpacked Chrome extension by id.",
+			InputSchema: objectSchema(map[string]any{
+				"id": stringSchema("Extension id."),
+			}, []string{"id"}),
+		},
+		{
+			Name:        "trigger_extension_action",
+			Title:       "Trigger Extension Action",
+			Description: "Trigger an extension's default action for an owned session tab.",
+			InputSchema: objectSchema(map[string]any{
+				"id":     stringSchema("Extension id."),
+				"tab_id": integerSchema("Optional owned Chrome tab id; defaults to the session's active tab."),
+			}, []string{"id"}),
+		},
+		{
+			Name:        "uninstall_extension",
+			Title:       "Uninstall Unpacked Extension",
+			Description: "Uninstall an unpacked Chrome extension by id.",
+			InputSchema: objectSchema(map[string]any{
+				"id": stringSchema("Extension id."),
+			}, []string{"id"}),
+		},
+		{
 			Name:        "move_mouse",
 			Title:       "Move Browser Cursor",
 			Description: "Move the browser cursor overlay inside a managed tab.",
@@ -474,6 +518,43 @@ func (server *mcpServer) runTool(name string, arguments map[string]any) (any, er
 		return server.runPageInfoTool(arguments)
 	case "cdp":
 		return server.runCDPTool(arguments)
+	case "list_extensions":
+		return server.invoke("listExtensions", map[string]any{})
+	case "install_extension":
+		path, err := requiredStringArg(arguments, "path")
+		if err != nil {
+			return nil, err
+		}
+		return server.invoke("installExtension", map[string]any{
+			"path":              path,
+			"enableInIncognito": optionalBoolArg(arguments, "enable_in_incognito"),
+		})
+	case "reload_extension":
+		id, err := requiredStringArg(arguments, "id")
+		if err != nil {
+			return nil, err
+		}
+		return server.invoke("reloadExtension", map[string]any{"id": id})
+	case "trigger_extension_action":
+		id, err := requiredStringArg(arguments, "id")
+		if err != nil {
+			return nil, err
+		}
+		tabID, ok, err := optionalIntArg(arguments, "tab_id")
+		if err != nil {
+			return nil, err
+		}
+		params := map[string]any{"id": id}
+		if ok {
+			params["tabId"] = tabID
+		}
+		return server.invoke("triggerExtensionAction", params)
+	case "uninstall_extension":
+		id, err := requiredStringArg(arguments, "id")
+		if err != nil {
+			return nil, err
+		}
+		return server.invoke("uninstallExtension", map[string]any{"id": id})
 	case "move_mouse":
 		return server.runMoveMouseTool(arguments)
 	case "wait_file_chooser":
@@ -743,6 +824,11 @@ func requiredFloatArg(arguments map[string]any, name string) (float64, error) {
 	default:
 		return 0, fmt.Errorf("%s must be a number", name)
 	}
+}
+
+func optionalBoolArg(arguments map[string]any, name string) bool {
+	value, ok := arguments[name].(bool)
+	return ok && value
 }
 
 func optionalObjectArg(arguments map[string]any, name string) (map[string]any, error) {

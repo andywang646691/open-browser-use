@@ -20,6 +20,21 @@ open-browser-use info
 
 ## Usage
 
+The client also exposes the five Chrome DevTools MCP Extension operations:
+
+```py
+installed = browser.client.list_extensions()
+installed_id = browser.client.install_extension("/absolute/path/to/ext")["id"]
+browser.client.reload_extension(installed_id)
+browser.client.trigger_extension_action(installed_id, tab.id)  # omit tab.id to use the session's active tab
+browser.client.uninstall_extension(installed_id)
+```
+
+These operations use Chrome's browser-root `Extensions.*` CDP domain and
+support unpacked extensions only. They require a Chrome instance with unsafe
+extension debugging support, normally with `OBU_CDP_MODE=direct` or `auto`.
+
+
 ```py
 import json
 from pathlib import Path

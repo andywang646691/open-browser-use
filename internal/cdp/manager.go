@@ -42,6 +42,13 @@ type ManagerConfig struct {
 	CDPTimeout         time.Duration
 }
 
+type eventWaiter struct {
+	predicate func(RawEvent) bool
+	ch        chan RawEvent
+	done      chan struct{}
+	once      sync.Once
+}
+
 type fileChooserWaiter struct {
 	tabID   int
 	ch      chan fileChooserEvent
@@ -73,6 +80,16 @@ type Manager struct {
 	connStateKnown bool
 	connState      bool
 
+	// Temporary browser-root target discovery waits (used by extension action
+	// triggering to resolve Chrome's synthetic type=tab target).
+	eventWaitMu   sync.Mutex
+	eventWaiters  map[uint64]*eventWaiter
+	nextEventWait uint64
+	tabTargetsMu  sync.RWMutex
+	tabTargets    map[string]struct{}
+	tabSessions   map[string]string // CDP tab-session id -> synthetic tab target id
+	pageToTab     map[string]string // page target id -> synthetic tab target id
+
 	// File chooser handling
 	fcMu          sync.Mutex
 	fcWaiters     map[int]*fileChooserWaiter
@@ -95,6 +112,10 @@ func NewManager(config ManagerConfig) *Manager {
 		byCDPSessID:   make(map[string]*DirectSession),
 		fcWaiters:     make(map[int]*fileChooserWaiter),
 		activeChooser: make(map[string]*activeFileChooser),
+		eventWaiters:  make(map[uint64]*eventWaiter),
+		tabTargets:    make(map[string]struct{}),
+		tabSessions:   make(map[string]string),
+		pageToTab:     make(map[string]string),
 	}
 	return m
 }
@@ -160,6 +181,21 @@ func (m *Manager) SetClient(client *Client) {
 }
 
 func (m *Manager) handleCDPEvent(raw RawEvent) {
+	m.recordTabTargetEvent(raw)
+
+	m.eventWaitMu.Lock()
+	for id, waiter := range m.eventWaiters {
+		if waiter != nil && waiter.predicate != nil && waiter.predicate(raw) {
+			delete(m.eventWaiters, id)
+			select {
+			case waiter.ch <- raw:
+			default:
+			}
+			break
+		}
+	}
+	m.eventWaitMu.Unlock()
+
 	m.mu.RLock()
 	var session *DirectSession
 	if raw.SessionID != "" {
@@ -213,6 +249,112 @@ func (m *Manager) handleCDPEvent(raw RawEvent) {
 			"method": raw.Method,
 			"params": parsedParams,
 		})
+	}
+}
+
+func (m *Manager) registerEventWaiter(predicate func(RawEvent) bool) (uint64, *eventWaiter) {
+	m.eventWaitMu.Lock()
+	defer m.eventWaitMu.Unlock()
+	m.nextEventWait++
+	id := m.nextEventWait
+	waiter := &eventWaiter{
+		predicate: predicate,
+		ch:        make(chan RawEvent, 1),
+		done:      make(chan struct{}),
+	}
+	m.eventWaiters[id] = waiter
+	return id, waiter
+}
+
+func (m *Manager) removeEventWaiter(id uint64) {
+	m.eventWaitMu.Lock()
+	waiter, ok := m.eventWaiters[id]
+	if ok {
+		delete(m.eventWaiters, id)
+	}
+	m.eventWaitMu.Unlock()
+	if ok {
+		waiter.once.Do(func() { close(waiter.done) })
+	}
+}
+
+func (m *Manager) recordTabTargetEvent(raw RawEvent) {
+	if raw.Method != "Target.targetCreated" && raw.Method != "Target.attachedToTarget" && raw.Method != "Target.detachedFromTarget" {
+		return
+	}
+	var payload struct {
+		TargetInfo *struct {
+			TargetID string `json:"targetId"`
+			Type     string `json:"type"`
+		} `json:"targetInfo"`
+		SessionID string `json:"sessionId"`
+		TargetID  string `json:"targetId"`
+	}
+	if json.Unmarshal(raw.Params, &payload) != nil {
+		return
+	}
+
+	m.tabTargetsMu.Lock()
+	defer m.tabTargetsMu.Unlock()
+	switch raw.Method {
+	case "Target.targetCreated":
+		if payload.TargetInfo != nil && payload.TargetInfo.Type == "tab" && payload.TargetInfo.TargetID != "" {
+			m.tabTargets[payload.TargetInfo.TargetID] = struct{}{}
+		}
+	case "Target.attachedToTarget":
+		if payload.TargetInfo == nil || payload.TargetInfo.TargetID == "" {
+			return
+		}
+		if payload.TargetInfo.Type == "tab" && payload.SessionID != "" {
+			m.tabTargets[payload.TargetInfo.TargetID] = struct{}{}
+			m.tabSessions[payload.SessionID] = payload.TargetInfo.TargetID
+		}
+		if raw.SessionID != "" {
+			if tabTargetID, ok := m.tabSessions[raw.SessionID]; ok && payload.TargetInfo.Type == "page" {
+				m.pageToTab[payload.TargetInfo.TargetID] = tabTargetID
+			}
+		}
+
+	case "Target.detachedFromTarget":
+		if payload.SessionID == "" {
+			return
+		}
+		if tabTargetID, ok := m.tabSessions[payload.SessionID]; ok {
+			delete(m.tabSessions, payload.SessionID)
+			for pageTargetID, candidate := range m.pageToTab {
+				if candidate == tabTargetID {
+					delete(m.pageToTab, pageTargetID)
+				}
+			}
+		}
+	}
+}
+
+func (m *Manager) knownTabTarget(targetID string) bool {
+	m.tabTargetsMu.RLock()
+	_, ok := m.tabTargets[targetID]
+	m.tabTargetsMu.RUnlock()
+	return ok
+}
+
+func (m *Manager) tabTargetForPage(pageTargetID string) string {
+	m.tabTargetsMu.RLock()
+	targetID := m.pageToTab[pageTargetID]
+	m.tabTargetsMu.RUnlock()
+	return targetID
+}
+
+func (m *Manager) waitForEvent(ctx context.Context, predicate func(RawEvent) bool) (RawEvent, error) {
+	id, waiter := m.registerEventWaiter(predicate)
+	defer m.removeEventWaiter(id)
+
+	select {
+	case event := <-waiter.ch:
+		return event, nil
+	case <-waiter.done:
+		return RawEvent{}, errors.New("CDP manager closed while waiting for target event")
+	case <-ctx.Done():
+		return RawEvent{}, ctx.Err()
 	}
 }
 
@@ -817,6 +959,18 @@ func (m *Manager) Close() error {
 	m.mu.Unlock()
 
 	m.cleanAllFileChoosers()
+	m.eventWaitMu.Lock()
+	waiters := m.eventWaiters
+	m.eventWaiters = make(map[uint64]*eventWaiter)
+	m.eventWaitMu.Unlock()
+	m.tabTargetsMu.Lock()
+	m.tabTargets = make(map[string]struct{})
+	m.tabSessions = make(map[string]string)
+	m.pageToTab = make(map[string]string)
+	m.tabTargetsMu.Unlock()
+	for _, waiter := range waiters {
+		waiter.once.Do(func() { close(waiter.done) })
+	}
 	m.reportConnectionState(false)
 
 	if client != nil {

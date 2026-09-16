@@ -89,6 +89,20 @@ When Direct CDP is enabled (`OBU_CDP_MODE=direct` or explicitly `auto`; the defa
 - **Profile Boundary Isolation**: Because a single Chrome instance may host multiple profiles whose targets are all visible via root CDP, `getTargetMapping` must be answered by that profile's own extension instance verifying tab ownership. The host never guesses targets using URL or title across profiles.
 - **macOS Approval Boundary**: Accessibility automation runs only from the stable, separately installed and code-signed `Open Browser Use Approval Helper.app`, never inside the CLI, Python launcher, Chrome native-messaging host, or Chrome. On first use it calls `AXIsProcessTrustedWithOptions` with the system prompt option; macOS displays its own Accessibility authorization prompt, but the user must still explicitly enable the helper in Privacy & Security > Accessibility. The helper inspects Chrome windows and sheets, matches only the remote-debugging consent sheet, and presses only exact `Allow` / `允许`; the same helper handles the infobar close control and rejects settings/disable controls. Users grant Accessibility permission only to this helper. Approval and reconnect diagnostics are written locally with mode, PID, session/turn, and reason; no page content or credentials are logged. The helper relies on normal user-granted macOS Accessibility permission and does not bypass TCC.
 
+## Extension Lifecycle Operations
+
+The Extension capability uses Chrome's browser-root `Extensions.*` CDP domain:
+`getExtensions`, `loadUnpacked`, `triggerAction`, and `uninstall`. It supports
+unpacked extensions only and requires a Chrome configuration that exposes
+unsafe extension debugging, so installation and removal are explicit local
+browser-state changes. `installExtension` accepts only an absolute local
+folder. `triggerExtensionAction` is scoped to a tab owned by the caller's OBU
+session; the host asks the matching extension instance for the exact page target
+id, then resolves its synthetic tab target by exact CDP session identity and
+never guesses across profiles from URL or title. A caller must obtain user
+approval before installing or uninstalling an extension, and remote/untrusted
+integrations must add authentication and authorization above the OBU socket.
+
 ## Chrome Extension Permissions
 
 The MV3 extension uses high-privilege Chrome APIs because browser control requires them:

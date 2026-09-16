@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"time"
@@ -252,6 +253,51 @@ func (c *Client) WriteClipboard(tabID int, items []Params) (any, error) {
 
 func (c *Client) TurnEnded() (any, error) {
 	return c.Request("turnEnded", nil)
+}
+
+func (c *Client) ListExtensions() (any, error) {
+	return c.Request("listExtensions", nil)
+}
+
+func (c *Client) InstallExtension(path string, enableInIncognito bool) (any, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return nil, errors.New("install extension path must be an absolute unpacked extension directory")
+	}
+	return c.Request("installExtension", Params{
+		"path":              path,
+		"enableInIncognito": enableInIncognito,
+	})
+}
+
+func (c *Client) ReloadExtension(id string) (any, error) {
+	if id == "" {
+		return nil, errors.New("reload extension requires an extension id")
+	}
+	return c.Request("reloadExtension", Params{"id": id})
+}
+
+func (c *Client) TriggerExtensionAction(id string, tabID ...int) (any, error) {
+	if id == "" {
+		return nil, errors.New("trigger extension action requires an extension id")
+	}
+	params := Params{"id": id}
+	if len(tabID) > 1 {
+		return nil, errors.New("trigger extension action accepts at most one tab id")
+	}
+	if len(tabID) == 1 {
+		if tabID[0] <= 0 {
+			return nil, errors.New("trigger extension action requires a positive tab id when provided")
+		}
+		params["tabId"] = tabID[0]
+	}
+	return c.Request("triggerExtensionAction", params)
+}
+
+func (c *Client) UninstallExtension(id string) (any, error) {
+	if id == "" {
+		return nil, errors.New("uninstall extension requires an extension id")
+	}
+	return c.Request("uninstallExtension", Params{"id": id})
 }
 
 func ActiveSocketPath(socketDir string) (string, error) {

@@ -208,6 +208,45 @@ test("sends file chooser wrapper requests", async () => {
   }
 });
 
+test("sends extension lifecycle wrapper requests", async () => {
+  await withMockServer(
+    (request) => {
+      if (request.method === "listExtensions") {
+        return { result: [{ id: "extension-id", name: "Test", version: "1", path: "/tmp/ext", enabled: true }] };
+      }
+      if (request.method === "installExtension") {
+        assert.deepEqual(request.params, {
+          session_id: request.params.session_id,
+          turn_id: request.params.turn_id,
+          path: "/tmp/ext",
+          enableInIncognito: true
+        });
+        return { result: { id: "extension-id" } };
+      }
+      if (request.method === "reloadExtension") return { result: { id: "extension-id" } };
+      if (request.method === "triggerExtensionAction") {
+        assert.equal(request.params.id, "extension-id");
+        assert.equal(request.params.tabId, 123);
+        return { result: { ok: true } };
+      }
+      if (request.method === "uninstallExtension") return { result: { ok: true } };
+      throw new Error(`unexpected method ${request.method}`);
+    },
+    async (socketPath) => {
+      const client = new OpenBrowserUseClient({ socketPath });
+      assert.deepEqual(await client.listExtensions(), [
+        { id: "extension-id", name: "Test", version: "1", path: "/tmp/ext", enabled: true }
+      ]);
+      assert.deepEqual(await client.installExtension("/tmp/ext", true), { id: "extension-id" });
+      assert.deepEqual(await client.reloadExtension("extension-id"), { id: "extension-id" });
+      assert.deepEqual(await client.triggerExtensionAction("extension-id", 123), { ok: true });
+      assert.deepEqual(await client.uninstallExtension("extension-id"), { ok: true });
+      client.close();
+    }
+  );
+  assert.throws(() => new OpenBrowserUseClient({ socketPath: "/tmp/unused" }).installExtension("relative"), /absolute/);
+});
+
 test("sends download and clipboard wrapper requests", async () => {
   const directory = await mkdtemp(join(tmpdir(), "obu-sdk-js-"));
   const socketPath = join(directory, "obu.sock");

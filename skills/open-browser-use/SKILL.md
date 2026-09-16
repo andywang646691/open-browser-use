@@ -6,7 +6,11 @@ description: "Use Open Browser Use (OBU) for browser automation, web scraping, s
 # Open Browser Use
 
 Use OBU's real Chrome session through CDP: `cdp("Domain.method", **params)`,
-`evaluate(js)`, and the tab helpers below.
+`evaluate(js)`, and the tab helpers below. Extension lifecycle helpers
+(`list_extensions`, `install_extension`, `reload_extension`,
+`trigger_extension_action`, `uninstall_extension`) mirror the Chrome DevTools
+MCP Extension category and require Direct CDP support; they manage unpacked
+extensions only.
 
 ## Process
 
@@ -87,6 +91,10 @@ During browser work:
   `wait_for_event` over scraping only rendered nodes.
 - Use coordinates or raw CDP only when DOM/JS access is insufficient; inspect
   the relevant helper contract first.
+- Before installing or uninstalling an extension, confirm the user requested
+  that browser state change. Use an absolute unpacked extension directory;
+  after installation, use the returned id and an owned tab for
+  `trigger_extension_action`.
 
 OBU handles background-page readiness internally when attaching CDP, including
 waking frozen pages and loading discarded pages without selecting the tab.
@@ -169,7 +177,10 @@ persisted experience.
 - Ask before uploads, clipboard access, form submissions, purchases, messages,
   deletions, or other externally visible changes.
 - Stop at login walls and ask; signed-in SSO may be used as-is.
-- Ask before installing extensions or launching browsers.
+- Ask before installing extensions or launching browsers. Extension lifecycle
+  helpers may require `OBU_CDP_MODE=direct` or `auto` and a Chrome launch with
+  unsafe extension debugging enabled; unsupported Chrome configurations should
+  fail explicitly rather than silently falling back.
 
 ## References
 

@@ -3,6 +3,7 @@
 ## 2026-09
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
+| 2026-09-16 | Chrome Extension 生命周期 | Agent 可以像 Chrome DevTools MCP 的 Extension 类别一样管理本地 unpacked 扩展。 | 新增 `list_extensions`、`install_extension`、`reload_extension`、`trigger_extension_action`、`uninstall_extension` 的 OBU RPC、CLI、Python/JS/Go SDK 与脚本 helper；通过 browser-root Direct CDP `Extensions.*` 实现，trigger 使用扩展精确返回的 tab target 映射，不跨 profile 猜测；仅支持 unpacked extension，Chrome 不支持时明确失败。 |
 | --- | --- | --- | --- |
 | 2026-09-08 | 任务脚本可靠性（待发布） | 可复用 Python 脚本更接近普通文件执行，多任务不会因同秒同名而共用清理范围，事件等待减少无谓丢失。 | `exec <file> -- <args...>` 支持脚本参数、正确 `__file__` 与同目录 import，并自动以任务工作区为 Python 子进程 cwd；taskinit 原子分配 `<slug>-<unique>` 实例（去掉冗余时间戳，旧目录不迁移）、校验 domain/slug、保留 browser instance/profile selector；事件等待只消费匹配项，读超时保留半帧、恢复原 timeout，绝对 deadline 不被通知续期；发送失败不自动重试；Python helper/transport 共 60 项测试接入 CI。原始 CDP/JSON-RPC、完整 Python、run/heredoc 均保留，旧任务无需迁移。 |
 

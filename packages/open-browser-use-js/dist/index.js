@@ -1,5 +1,6 @@
 import { createConnection } from "node:net";
 import { endianness } from "node:os";
+import { isAbsolute } from "node:path";
 const headerBytes = 4;
 const defaultNavigationTimeoutMs = 10_000;
 export class OpenBrowserUseEvaluateError extends Error {
@@ -236,6 +237,33 @@ export class OpenBrowserUseClient {
     }
     turnEnded() {
         return this.request("turnEnded");
+    }
+    listExtensions() {
+        return this.request("listExtensions");
+    }
+    installExtension(path, enableInIncognito = false) {
+        if (!path || !isAbsolute(path)) {
+            throw new TypeError("installExtension path must be an absolute unpacked extension directory");
+        }
+        return this.request("installExtension", { path, enableInIncognito });
+    }
+    reloadExtension(id) {
+        if (!id)
+            throw new TypeError("reloadExtension requires an extension id");
+        return this.request("reloadExtension", { id });
+    }
+    triggerExtensionAction(id, tabId) {
+        if (!id)
+            throw new TypeError("triggerExtensionAction requires an extension id");
+        if (tabId !== undefined && (!Number.isInteger(tabId) || tabId <= 0)) {
+            throw new TypeError("triggerExtensionAction requires a positive tab id when provided");
+        }
+        return this.request("triggerExtensionAction", { id, ...(tabId === undefined ? {} : { tabId }) });
+    }
+    uninstallExtension(id) {
+        if (!id)
+            throw new TypeError("uninstallExtension requires an extension id");
+        return this.request("uninstallExtension", { id });
     }
     #handleData(chunk) {
         this.#pendingData = Buffer.concat([this.#pendingData, chunk]);

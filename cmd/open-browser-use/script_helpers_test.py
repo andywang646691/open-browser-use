@@ -470,6 +470,34 @@ class PreludeTest(unittest.TestCase):
             self.sh.evaluate("nope()")
         self.assertIn("evaluate threw", str(ctx.exception))
 
+    def test_extension_helpers_send_expected_requests(self):
+        self.assertEqual(self.sh.list_extensions(), {"ok": True})
+        self.sh.install_extension("/tmp/test-extension", enable_in_incognito=True)
+        self.sh.reload_extension("extension-id")
+        self.sh.trigger_extension_action("extension-id", "42")
+        self.sh.uninstall_extension("extension-id")
+        methods = [request["method"] for request in self.host.requests]
+        self.assertEqual(
+            methods,
+            ["listExtensions", "installExtension", "reloadExtension", "triggerExtensionAction", "uninstallExtension"],
+        )
+        install = self.last("installExtension")
+        self.assertEqual(install["params"]["path"], "/tmp/test-extension")
+        self.assertTrue(install["params"]["enableInIncognito"])
+        trigger = self.last("triggerExtensionAction")
+        self.assertEqual(trigger["params"]["tabId"], 42)
+
+    def test_extension_helpers_validate_arguments(self):
+        with self.assertRaises(ValueError):
+            self.sh.install_extension("relative-extension")
+        with self.assertRaises(ValueError):
+            self.sh.reload_extension("")
+        with self.assertRaises(RuntimeError):
+            self.sh.trigger_extension_action("extension-id", 0)
+        with self.assertRaises(ValueError):
+            self.sh.uninstall_extension("")
+        self.assertEqual(self.host.requests, [])
+
     def test_release_and_deliverable_are_separate(self):
         self.sh.claim_tab(3)
         self.sh.mark_deliverable("3")

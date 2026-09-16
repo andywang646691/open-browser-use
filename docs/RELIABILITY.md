@@ -76,6 +76,13 @@ obu exec --task x.com/fetch-a8k3 task.py -- --limit 20 "argument with spaces"
 - **迟到 Attach 自动回收**：当 `Target.attachToTarget` 超时后如果 Chrome 在稍后回复了新的 sessionId，Host 会触发 best-effort `Target.detachFromTarget` 立即释放该迟到 session，杜绝底层 session 泄露。
 - **主 frame 导航异步唤醒重放**：当接收到 main frame 的 `Page.frameNavigated` 事件时，Host 异步启动后台唤醒重放（`Page.setWebLifecycleState(active)` 与 `Emulation.setFocusEmulationEnabled(true)`），不阻塞 WebSocket 读取主循环。
 - **生命周期同步收尾**：任何 `releaseTabs`、`closeUserTab`、`finalizeTabs` 或会话断开动作均显式调用 Direct CDP Detach 回收目标 session，确保与 Chrome 扩展端所有权严格对齐。
+- **Extension 生命周期**：`listExtensions`、`installExtension`、`reloadExtension`、
+  `triggerExtensionAction`、`uninstallExtension` 使用同一条 browser-root Direct CDP
+  连接。`triggerExtensionAction` 未给出 `tabId` 时，Host 先向扩展查询当前
+  session 的唯一逻辑 active tab；若没有或有多个 active tab 则失败，不猜测页面。
+  这些方法没有 page-tab attachment，因此 `releaseTabs` 不会误清理 Extension
+  域操作；trigger 为解析 synthetic tab target 会短暂 attach tab session，
+  成功或失败都会 best-effort detach；Chrome 不支持 `Extensions.*` 时向调用方返回明确错误。
 
 ## 后台页面 readiness 与排队过期
 

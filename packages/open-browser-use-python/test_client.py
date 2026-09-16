@@ -83,6 +83,53 @@ class OpenBrowserUseClientTest(unittest.TestCase):
                 client.close()
             thread.join(timeout=1)
 
+    def test_extension_lifecycle_wrappers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            socket_path = str(Path(directory) / "obu.sock")
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(socket_path)
+            server.listen(1)
+            expected = [
+                ("listExtensions", {}),
+                ("installExtension", {"path": "/tmp/ext", "enableInIncognito": True}),
+                ("reloadExtension", {"id": "ext-1"}),
+                ("triggerExtensionAction", {"id": "ext-1", "tabId": 123}),
+                ("uninstallExtension", {"id": "ext-1"}),
+            ]
+
+            def serve() -> None:
+                conn, _ = server.accept()
+                with conn:
+                    for method, params in expected:
+                        header = conn.recv(4)
+                        (length,) = struct.unpack("=I", header)
+                        request = json.loads(conn.recv(length))
+                        self.assertEqual(request["method"], method)
+                        for key, value in params.items():
+                            self.assertEqual(request["params"][key], value)
+                        result = [{"id": "ext-1"}] if method == "listExtensions" else {"id": "ext-1"}
+                        conn.sendall(encode_frame({"jsonrpc": "2.0", "id": request["id"], "result": result}))
+                server.close()
+
+            thread = threading.Thread(target=serve)
+            thread.start()
+            client = OpenBrowserUseClient(socket_path=socket_path)
+            try:
+                self.assertEqual(client.list_extensions(), [{"id": "ext-1"}])
+                self.assertEqual(client.install_extension("/tmp/ext", enable_in_incognito=True), {"id": "ext-1"})
+                self.assertEqual(client.reload_extension("ext-1"), {"id": "ext-1"})
+                self.assertEqual(client.trigger_extension_action("ext-1", 123), {"id": "ext-1"})
+                self.assertEqual(client.uninstall_extension("ext-1"), {"id": "ext-1"})
+            finally:
+                client.close()
+            thread.join(timeout=1)
+
+    def test_extension_lifecycle_validates_arguments(self) -> None:
+        with self.assertRaises(ValueError):
+            OpenBrowserUseClient("/tmp/no-socket").install_extension("relative")
+        with self.assertRaises(ValueError):
+            OpenBrowserUseClient("/tmp/no-socket").trigger_extension_action("ext", 0)
+
     def test_download_and_clipboard_wrappers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             socket_path = str(Path(directory) / "obu.sock")

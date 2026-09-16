@@ -69,6 +69,7 @@ upper-layer runtime / CLI / Python prelude
         │    ws://127.0.0.1:<port>/devtools/browser/... (DevToolsActivePort)
         │    Target.attachToTarget(flatten=true) per claimed Chrome tab
         │    Direct page CDP execution + event forwarding (onCDPEvent)
+        │    Extensions.getExtensions/loadUnpacked/triggerAction/uninstall
         └─ Chrome Native Messaging stdio
              -> Open Browser Use MV3 service worker
              -> exact tabId->targetId mapping (getTargetMapping)
@@ -165,6 +166,13 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   `*.sock` 并连接最新可用 socket，连接成功后修复 active registry；如果
   registry 指向不可连接的旧 socket，CLI 会移除 stale registry entry 和对应
   stale socket file，再尝试目录扫描，避免后续命令持续命中同一个失效 socket。
+- `open-browser-use install-extension`、`list-extensions`、`reload-extension`、
+  `trigger-extension-action`、`uninstall-extension`：通过 Direct CDP Browser
+  Root 的 `Extensions.*` 域管理 unpacked Chrome extensions。安装需要绝对目录；
+  trigger 需要当前 session 已拥有的 `tabId`（省略时使用该 session 唯一 active tab），
+  Host 通过扩展精确解析 `tabId -> targetId` 并再解析 synthetic tab target，
+  不按 URL/title 猜测。Chrome 不支持该 CDP 域或未启用 unsafe extension debugging
+  时明确失败，不回退到 `chrome.debugger`。
 - `open-browser-use run`：line-oriented action plan 入口，支持一次执行多条
   CLI action，保留同一个 session/turn，并让 `open-tab`/`claim-tab` 设置默认
   tab，供后续 `wait-load`、`page-info`、`navigate`、`cdp` 等 tab-scoped action
@@ -216,7 +224,9 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   MCP 指引。
 - CLI 便捷子命令覆盖当前核心能力：`ping`、`info`、`tabs`、
   `user-tabs`、`history`、`open-tab`、`navigate`、`claim-tab`、
-  `release-tabs`、`mark-deliverable`、`finalize-tabs`（弃用兼容）、`name-session`、`cdp`、`move-mouse`、
+  `release-tabs`、`mark-deliverable`、`finalize-tabs`（弃用兼容）、`name-session`、`cdp`、
+  `install-extension`、`list-extensions`、`reload-extension`、
+  `trigger-extension-action`、`uninstall-extension`、`move-mouse`、
   `wait-file-chooser`、`set-file-chooser-files`、`turn-ended`、`profiles`、
   `taskinit`、`api-sheet`、`exec`、`tasksizes`。
 - 任务启动仪式一条龙：`obu taskinit <domain>/<slug>` 探测并选定
@@ -270,7 +280,10 @@ unpacked 安装通过各 profile 的 `Secure Preferences` 里 `extensions.settin
   root 仍只在 macOS 路径中自动发现。未显式选择时仍保留
   `active.json` 快速路径；`active.json` 缺失或失效时，CLI 会扫描 socket 目录并
   修复 registry，因此不需要重装扩展。
-- MV3 extension core handlers：`getInfo`、`createTab`、`getTabs`、
+- `Extension lifecycle RPC`（由 Host Direct CDP 提供）：`listExtensions`、
+  `installExtension`、`reloadExtension`、`triggerExtensionAction`、
+  `uninstallExtension`。它们对应 Chrome DevTools MCP 的 five Extension tools，
+  只覆盖 unpacked extensions；其他 OBU MV3 core handlers：`getInfo`、`createTab`、`getTabs`、
   `getUserTabs`、`getUserHistory`、`claimUserTab`、`releaseTabs`、`markDeliverable`、`closeUserTab`、`finalizeTabs`（弃用兼容）、
   `nameSession`、`attach`、`detach`、`executeCdp`、`moveMouse`、
   `waitForFileChooser`、`setFileChooserFiles`、`waitForDownload`、

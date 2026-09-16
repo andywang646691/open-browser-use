@@ -69,3 +69,11 @@ func main() {
 
 Use `Client.Request(method, params)` when you need an unrestricted Browser Use
 JSON-RPC call, or `Client.ExecuteCDP` / `Browser.CDP.Call` for raw CDP commands.
+
+The client also exposes the five Chrome DevTools MCP Extension operations:
+`ListExtensions`, `InstallExtension`, `ReloadExtension`,
+`TriggerExtensionAction`, and `UninstallExtension` (omit the optional tab id
+argument to use the session's active tab). They use Chrome's browser-root
+`Extensions.*` CDP domain and support unpacked extensions only;
+use a Chrome instance with unsafe extension debugging support, normally with
+`OBU_CDP_MODE=direct` or `auto`.

@@ -70,6 +70,25 @@ No separate task-pause status is needed.
 Reload the updated extension before using the helpers. An old extension may
 report an unsupported method; stop and update it rather than guessing a fallback.
 
+## Extension lifecycle
+
+The Extension category is available through the client/CLI helpers:
+
+```python
+extensions = list_extensions()
+installed = install_extension("/absolute/path/to/unpacked-extension")
+extension_id = installed["id"]
+reload_extension(extension_id)
+trigger_extension_action(extension_id, tab_id)  # tab_id optional; defaults to session active tab
+uninstall_extension(extension_id)
+```
+
+These operations use the browser-root `Extensions.*` CDP domain and support
+unpacked extensions only. They require Direct CDP/unsafe extension debugging;
+if Chrome does not expose that domain, the request fails explicitly. Installing
+or uninstalling changes browser state and requires user approval. Triggering an
+action requires an owned tab when an explicit `tab_id` is provided.
+
 ## Files and clipboard
 
 Uploads: start `wait_file_chooser`/`wait-file-chooser`, trigger the chooser,
