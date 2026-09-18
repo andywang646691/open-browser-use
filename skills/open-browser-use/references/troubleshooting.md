@@ -30,8 +30,11 @@ Do not silently install, enable, or repair browser integration when the action n
 The CLI first discovers the active socket from the registry. If the registry is
 missing, recent CLI versions scan `--socket-dir` for `*.sock` files and connect
 to the newest usable socket, then repair the registry. If the registry points to
-a stale socket, the CLI removes the stale entry and stale socket file, then tries
-the same socket-dir scan.
+an unavailable socket, the CLI removes only the stale registry entry and tries
+the
+same socket-dir scan. It deliberately preserves failed `*.sock` paths: a transient
+probe failure must not unlink a still-running native host's listener and make it
+impossible to rediscover.
 
 Useful flags:
 

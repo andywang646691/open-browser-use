@@ -166,8 +166,9 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   任意 method/params；未显式传入 `--socket` 时会优先读取 active socket
   registry。registry 缺失时，CLI 会按修改时间扫描 `--socket-dir` 下的
   `*.sock` 并连接最新可用 socket，连接成功后修复 active registry；如果
-  registry 指向不可连接的旧 socket，CLI 会移除 stale registry entry 和对应
-  stale socket file，再尝试目录扫描，避免后续命令持续命中同一个失效 socket。
+  registry 指向不可连接的旧 socket，CLI 只移除 stale registry entry，再尝试
+  目录扫描。CLI 不会因为一次探测失败就 unlink `*.sock`：监听进程可能只是
+  暂时不可达，删除 Unix socket 路径会让仍存活的 native host 永久无法被重新发现。
 - `open-browser-use install-extension`、`list-extensions`、`reload-extension`、
   `trigger-extension-action`、`uninstall-extension`：通过 Direct CDP Browser
   Root 的 `Extensions.*` 域管理 unpacked Chrome extensions。安装需要绝对目录；

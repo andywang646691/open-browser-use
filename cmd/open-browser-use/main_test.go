@@ -1186,11 +1186,7 @@ func TestInvokeScansSocketDirWhenActiveRecordMissing(t *testing.T) {
 	}
 	defer os.RemoveAll(socketDir)
 	stalePath := filepath.Join(socketDir, "stale.sock")
-	staleListener, err := net.Listen("unix", stalePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := staleListener.Close(); err != nil {
+	if err := os.WriteFile(stalePath, []byte("stale socket placeholder"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	socketPath := filepath.Join(socketDir, "live.sock")
@@ -1250,12 +1246,12 @@ func TestInvokeScansSocketDirWhenActiveRecordMissing(t *testing.T) {
 	if record.PID != 0 {
 		t.Fatalf("expected repaired active socket pid to be unknown, got %d", record.PID)
 	}
-	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
-		t.Fatalf("expected stale socket file to be removed after fallback success, got %v", err)
+	if _, err := os.Stat(stalePath); err != nil {
+		t.Fatalf("expected failed socket probe to preserve the socket path, got %v", err)
 	}
 }
 
-func TestInvokeCleansStaleSocketFilesDuringScan(t *testing.T) {
+func TestInvokePreservesFailedSocketFilesDuringScan(t *testing.T) {
 	socketDir, err := os.MkdirTemp("/tmp", "obu-socket-test-")
 	if err != nil {
 		t.Fatal(err)
@@ -1263,11 +1259,7 @@ func TestInvokeCleansStaleSocketFilesDuringScan(t *testing.T) {
 	defer os.RemoveAll(socketDir)
 
 	stalePath := filepath.Join(socketDir, "stale.sock")
-	staleListener, err := net.Listen("unix", stalePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := staleListener.Close(); err != nil {
+	if err := os.WriteFile(stalePath, []byte("stale socket placeholder"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := host.WriteActiveSocketRecord(socketDir, stalePath); err != nil {
@@ -1312,8 +1304,8 @@ func TestInvokeCleansStaleSocketFilesDuringScan(t *testing.T) {
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
-		t.Fatalf("expected stale socket file to be removed, got %v", err)
+	if _, err := os.Stat(stalePath); err != nil {
+		t.Fatalf("expected failed socket probe to preserve the socket path, got %v", err)
 	}
 	record, err := host.ReadActiveSocketRecord(socketDir)
 	if err != nil {

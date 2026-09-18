@@ -2653,8 +2653,11 @@ func dialBrowserSocket(socketPath string, socketDir string, timeout time.Duratio
 		if dialErr == nil {
 			return conn, nil
 		}
+		// The registry is only a hint. Do not unlink the stale path here: a
+		// listener can be temporarily unreachable while its process is still
+		// alive, and unlinking its Unix socket makes that host permanently
+		// undiscoverable even after it becomes reachable again.
 		_ = host.RemoveActiveSocketRecord(socketDir, record.SocketPath)
-		removeSocketPathIfInDir(socketDir, record.SocketPath)
 		conn, scanErr := scanSocketDir(socketDir, record.SocketPath, timeout)
 		if scanErr == nil {
 			return conn, nil
@@ -2823,7 +2826,9 @@ func pickSocketForProfile(socketDir string, browserSelector string, profileSelec
 	for _, candidate := range candidates {
 		conn, err := net.DialTimeout("unix", candidate.path, probeTimeout)
 		if err != nil {
-			removeSocketPathIfInDir(socketDir, candidate.path)
+			// A failed probe is not proof that the listener is dead; another
+			// process may be starting or the listener may be momentarily
+			// unable to accept connections.
 			continue
 		}
 		resp, err := getInfoOverConn(conn, probeTimeout)
@@ -2913,34 +2918,17 @@ func scanSocketDir(socketDir string, skipPath string, timeout time.Duration) (ne
 		conn, err := net.DialTimeout("unix", candidate.path, probeTimeout)
 		if err == nil {
 			repairActiveSocketRecord(dir, candidate)
-			cleanupStaleSocketCandidates(dir, candidates, candidate.path, probeTimeout)
 			return conn, nil
 		}
-		removeSocketPathIfInDir(dir, candidate.path)
+		// Leave failed candidates in place. Removing a Unix socket path is
+		// destructive to a still-running listener, which can leave the
+		// native host alive but impossible for the CLI to rediscover.
 		lastErr = err
 	}
 	if lastErr == nil {
 		return nil, fmt.Errorf("no socket files in %q after filtering", dir)
 	}
 	return nil, lastErr
-}
-
-func cleanupStaleSocketCandidates(socketDir string, candidates []socketCandidate, keepPath string, timeout time.Duration) {
-	cleanupTimeout := timeout
-	if cleanupTimeout > 100*time.Millisecond {
-		cleanupTimeout = 100 * time.Millisecond
-	}
-	for _, candidate := range candidates {
-		if candidate.path == keepPath {
-			continue
-		}
-		conn, err := net.DialTimeout("unix", candidate.path, cleanupTimeout)
-		if err == nil {
-			_ = conn.Close()
-			continue
-		}
-		removeSocketPathIfInDir(socketDir, candidate.path)
-	}
 }
 
 func repairActiveSocketRecord(socketDir string, candidate socketCandidate) {
@@ -2958,29 +2946,6 @@ func repairActiveSocketRecord(socketDir string, candidate socketCandidate) {
 		return
 	}
 	_ = os.Chmod(path, 0o600)
-}
-
-func removeSocketPathIfInDir(socketDir string, socketPath string) {
-	dir := socketDir
-	if dir == "" {
-		dir = host.DefaultSocketDir
-	}
-	dirAbs, err := filepath.Abs(dir)
-	if err != nil {
-		return
-	}
-	pathAbs, err := filepath.Abs(socketPath)
-	if err != nil {
-		return
-	}
-	rel, err := filepath.Rel(dirAbs, pathAbs)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || rel == ".." {
-		return
-	}
-	if filepath.Dir(rel) != "." || !strings.HasSuffix(rel, ".sock") {
-		return
-	}
-	_ = os.Remove(pathAbs)
 }
 
 func writeJSON(value any) error {
