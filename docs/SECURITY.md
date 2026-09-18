@@ -113,7 +113,7 @@ The MV3 extension uses high-privilege Chrome APIs because browser control requir
 - `downloads` for download observation.
 - Native Messaging to communicate with the local host.
 
-Users must understand that installing and enabling the extension allows Open Browser Use to inspect and operate real Chrome tabs in their active profile. The native messaging host manifest must keep `allowed_origins` restricted to the expected Open Browser Use extension ID.
+Users must understand that installing and enabling the extension allows Open Browser Use to inspect and operate real Chrome tabs in their active profile. The native messaging host manifest must keep `allowed_origins` restricted to the built-in OBU extension IDs (Web Store, beta keyed, and the repository fork) or to one explicitly supplied custom extension ID; it must never allow arbitrary origins.
 
 ## Clipboard, Downloads, And Files
 

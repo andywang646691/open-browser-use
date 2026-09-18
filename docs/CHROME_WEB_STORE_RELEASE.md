@@ -10,8 +10,9 @@ Chrome Web Store 只分发 `apps/chrome-extension/` 里的 MV3 extension 包。
 单独安装到本机。npm 和 Homebrew 安装只提供 CLI，并提示用户显式运行
 `open-browser-use setup`。
 
-Chrome extension 不能自己安装 native messaging host manifest。正式扩展 ID 是
-`bgjoihaepiejlfjinojjfgokghnodnhd`，已经作为 CLI 默认值写入。正式安装路径是：
+Chrome extension 不能自己安装 native messaging host manifest。默认 manifest 会
+同时允许 OBU 内置的 Web Store、beta keyed 和仓库 fork Load unpacked 扩展 ID；
+自定义扩展构建仍可通过 `--extension-id` 显式指定。正式安装路径是：
 
 ```bash
 open-browser-use setup

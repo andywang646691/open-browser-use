@@ -99,11 +99,12 @@ func TestNativeManifestDefaultsToStoreExtensionAndStableHostPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	origins, ok := manifest["allowed_origins"].([]string)
-	if !ok || len(origins) != 1 {
-		t.Fatalf("expected one allowed origin, got %#v", manifest["allowed_origins"])
+	if !ok {
+		t.Fatalf("expected allowed origins, got %#v", manifest["allowed_origins"])
 	}
-	if origins[0] != "chrome-extension://"+defaultChromeExtensionID+"/" {
-		t.Fatalf("expected default extension origin, got %q", origins[0])
+	wantOrigins := nativeMessagingOrigins(nativeMessagingExtensionIDs(""))
+	if !slices.Equal(origins, wantOrigins) {
+		t.Fatalf("expected built-in extension origins %v, got %v", wantOrigins, origins)
 	}
 	hostPath, err := stableNativeHostPath()
 	if err != nil {
@@ -182,11 +183,28 @@ func TestCobraInstallManifestDefaultsToStoreExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 	origins, ok := manifest["allowed_origins"].([]any)
-	if !ok || len(origins) != 1 {
-		t.Fatalf("expected one allowed origin, got %#v", manifest["allowed_origins"])
+	if !ok {
+		t.Fatalf("expected allowed origins, got %#v", manifest["allowed_origins"])
 	}
-	if origins[0] != "chrome-extension://"+defaultChromeExtensionID+"/" {
-		t.Fatalf("expected default extension origin, got %#v", origins[0])
+	wantOrigins := nativeMessagingOrigins(nativeMessagingExtensionIDs(""))
+	if len(origins) != len(wantOrigins) {
+		t.Fatalf("expected origins %v, got %#v", wantOrigins, origins)
+	}
+	for i, want := range wantOrigins {
+		if origins[i] != want {
+			t.Fatalf("expected origin %q at index %d, got %#v", want, i, origins[i])
+		}
+	}
+}
+
+func TestNativeManifestExplicitExtensionIDStaysNarrow(t *testing.T) {
+	manifest, err := nativeManifest(forkExtensionID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origins, ok := manifest["allowed_origins"].([]string)
+	if !ok || !slices.Equal(origins, []string{"chrome-extension://" + forkExtensionID + "/"}) {
+		t.Fatalf("expected explicit extension origin only, got %#v", manifest["allowed_origins"])
 	}
 }
 

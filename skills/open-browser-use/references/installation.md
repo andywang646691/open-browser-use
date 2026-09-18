@@ -85,12 +85,19 @@ One-time fork setup:
    `Load unpacked` → `apps/chrome-extension/`. Disable or remove any previous
    store/beta copy so only one native messaging connection exists.
 
-3. Register the native host for the fork's extension id (the id shown on
-   `chrome://extensions`, or derived from the manifest key):
+3. Register the native host. The default manifest now allows the built-in
+   Web Store, beta-keyed, and this fork's Load unpacked extension IDs, so the
+   normal repair command is sufficient:
 
    ```sh
-   open-browser-use install-manifest --extension-id <fork-extension-id>
-   open-browser-use install-manifest --extension-id <fork-extension-id> --browser chrome-beta
+   open-browser-use install-manifest
+   open-browser-use install-manifest --browser chrome-beta
+   ```
+
+   For a custom extension build, pass its exact ID explicitly:
+
+   ```sh
+   open-browser-use install-manifest --extension-id <custom-extension-id>
    ```
 
    Restart Chrome (or toggle the extension) so the new native host manifest is

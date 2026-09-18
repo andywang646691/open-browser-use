@@ -113,8 +113,10 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
   `open-browser-use host`。
 - `open-browser-use manifest`：输出 Chrome native messaging host manifest。
 - `open-browser-use install-manifest`：把 native messaging host manifest
-  写入 Chrome 默认位置，或通过 `--output` 写到指定路径。默认 extension id
-  是 Chrome Web Store 版 `bgjoihaepiejlfjinojjfgokghnodnhd`。
+  写入 Chrome 默认位置，或通过 `--output` 写到指定路径。默认会同时允许 OBU
+  内置的 Web Store、beta keyed 和本 fork Load unpacked 扩展 ID；使用
+  `--extension-id` 时只允许显式指定的自定义扩展 ID，避免 Native Messaging
+  白名单与实际安装的扩展身份失配。
   Windows 默认写入
   `%LOCALAPPDATA%\OpenBrowserUse\NativeMessagingHosts\com.ifuryst.open_browser_use.extension.json`，
   并注册

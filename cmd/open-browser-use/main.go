@@ -182,7 +182,10 @@ func runHost(socketDir string, socketPath string, cdpMode string) error {
 }
 
 func newSetupCommand() *cobra.Command {
-	extensionID := defaultChromeExtensionID
+	// An empty ID means the native host manifest should allow all built-in OBU
+	// extension identities (Web Store, beta, and this repository's unpacked fork).
+	// Keep an explicit --extension-id narrow for custom builds.
+	var extensionID string
 	var binaryPath string
 	var externalExtensionOutput string
 	var browser string
@@ -208,7 +211,7 @@ func newSetupCommand() *cobra.Command {
 			return renderStoreSetupResult(cmd.OutOrStdout(), result, status)
 		},
 	}
-	cmd.Flags().StringVar(&extensionID, "extension-id", defaultChromeExtensionID, "Chrome extension id for allowed_origins")
+	cmd.Flags().StringVar(&extensionID, "extension-id", "", "Chrome extension id for allowed_origins; defaults to all built-in OBU extension ids")
 	cmd.Flags().StringVar(&binaryPath, "path", "", "native host binary target for the stable host link")
 	cmd.Flags().StringVar(&externalExtensionOutput, "external-extension-output", "", "Chrome external extension JSON output path")
 	cmd.Flags().StringVar(&browser, "browser", "", "browser to register with Chrome Web Store setup (chrome or chrome-beta)")
@@ -218,7 +221,7 @@ func newSetupCommand() *cobra.Command {
 }
 
 func newSetupBetaCommand() *cobra.Command {
-	extensionID := defaultChromeExtensionID
+	var extensionID string
 	var binaryPath string
 	var zipPath string
 	var browser string
@@ -288,7 +291,7 @@ func newSetupBetaCommand() *cobra.Command {
 			}, status)
 		},
 	}
-	cmd.Flags().StringVar(&extensionID, "extension-id", defaultChromeExtensionID, "Chrome extension id for allowed_origins")
+	cmd.Flags().StringVar(&extensionID, "extension-id", "", "Chrome extension id for allowed_origins; defaults to all built-in OBU extension ids")
 	cmd.Flags().StringVar(&binaryPath, "path", "", "native host binary target for the stable host link")
 	cmd.Flags().StringVar(&zipPath, "zip", "", "existing extension zip path; defaults to the latest GitHub Release zip")
 	cmd.Flags().StringVar(&browser, "browser", "", "browser to register (chrome, chrome-beta, bitbrowser, or BitBrowser instance id)")
@@ -297,7 +300,7 @@ func newSetupBetaCommand() *cobra.Command {
 }
 
 func newManifestCommand() *cobra.Command {
-	extensionID := defaultChromeExtensionID
+	var extensionID string
 	var hostPath string
 	cmd := &cobra.Command{
 		Use:   "manifest",
@@ -311,13 +314,13 @@ func newManifestCommand() *cobra.Command {
 			return writeJSON(manifest)
 		},
 	}
-	cmd.Flags().StringVar(&extensionID, "extension-id", defaultChromeExtensionID, "Chrome extension id for allowed_origins")
+	cmd.Flags().StringVar(&extensionID, "extension-id", "", "Chrome extension id for allowed_origins; defaults to all built-in OBU extension ids")
 	cmd.Flags().StringVar(&hostPath, "path", "", "native host path written to manifest; defaults to the stable host link")
 	return cmd
 }
 
 func newInstallManifestCommand() *cobra.Command {
-	extensionID := defaultChromeExtensionID
+	var extensionID string
 	var binaryPath string
 	var outputPath string
 	var browser string
@@ -334,7 +337,7 @@ func newInstallManifestCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&extensionID, "extension-id", defaultChromeExtensionID, "Chrome extension id for allowed_origins")
+	cmd.Flags().StringVar(&extensionID, "extension-id", "", "Chrome extension id for allowed_origins; defaults to all built-in OBU extension ids")
 	cmd.Flags().StringVar(&binaryPath, "path", "", "native host binary target for the stable host link")
 	cmd.Flags().StringVar(&outputPath, "output", "", "native host manifest output path")
 	cmd.Flags().StringVar(&browser, "browser", "", "browser to register (chrome, chrome-beta, bitbrowser, or BitBrowser instance id)")
@@ -650,13 +653,7 @@ type installedChromeProfile struct {
 const forkExtensionID = "ldnahhefbkmhjohgiamfnfppaooejmag"
 
 func chromeExtensionCandidateIDs() []string {
-	candidates := []string{defaultChromeExtensionID}
-	if betaID, err := extensionIDFromPublicKey(betaExtensionPublicKey); err == nil && betaID != defaultChromeExtensionID {
-		candidates = append(candidates, betaID)
-	}
-	if forkExtensionID != "" && !slices.Contains(candidates, forkExtensionID) {
-		candidates = append(candidates, forkExtensionID)
-	}
+	candidates := nativeMessagingExtensionIDs("")
 	for _, id := range strings.Split(envValue("OBU_EXTENSION_IDS", ""), ",") {
 		id = strings.TrimSpace(id)
 		if id != "" && !slices.Contains(candidates, id) {
@@ -664,6 +661,37 @@ func chromeExtensionCandidateIDs() []string {
 		}
 	}
 	return candidates
+}
+
+// nativeMessagingExtensionIDs is the single source of truth for the extension
+// origins accepted by the native host. An empty explicit ID means the built-in
+// OBU identities: the Web Store build, the keyed beta build, and this fork's
+// load-unpacked build. Custom builds must opt in with --extension-id rather than
+// being added implicitly through detection configuration.
+func nativeMessagingExtensionIDs(explicitID string) []string {
+	if id := strings.TrimSpace(explicitID); id != "" {
+		return []string{id}
+	}
+	ids := []string{defaultChromeExtensionID}
+	if betaID, err := extensionIDFromPublicKey(betaExtensionPublicKey); err == nil && !slices.Contains(ids, betaID) {
+		ids = append(ids, betaID)
+	}
+	if forkExtensionID != "" && !slices.Contains(ids, forkExtensionID) {
+		ids = append(ids, forkExtensionID)
+	}
+	return ids
+}
+
+func nativeMessagingOrigins(extensionIDs []string) []string {
+	origins := make([]string, 0, len(extensionIDs))
+	for _, id := range extensionIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		origins = append(origins, fmt.Sprintf("chrome-extension://%s/", id))
+	}
+	return origins
 }
 
 func detectInstalledChromeExtension() (detectedExtension, bool) {
@@ -2966,10 +2994,7 @@ func writeJSONTo(writer io.Writer, value any) error {
 }
 
 func nativeManifest(extensionID string, hostPath string) (map[string]any, error) {
-	allowedExtensionID := strings.TrimSpace(extensionID)
-	if allowedExtensionID == "" {
-		allowedExtensionID = defaultChromeExtensionID
-	}
+	allowedExtensionIDs := nativeMessagingExtensionIDs(extensionID)
 	path := hostPath
 	if path == "" {
 		var err error
@@ -2985,13 +3010,11 @@ func nativeManifest(extensionID string, hostPath string) (map[string]any, error)
 		path = absolutePath
 	}
 	return map[string]any{
-		"name":        host.NativeHostName,
-		"description": "Open Browser Use Chrome native messaging host",
-		"type":        "stdio",
-		"path":        path,
-		"allowed_origins": []string{
-			fmt.Sprintf("chrome-extension://%s/", allowedExtensionID),
-		},
+		"name":            host.NativeHostName,
+		"description":     "Open Browser Use Chrome native messaging host",
+		"type":            "stdio",
+		"path":            path,
+		"allowed_origins": nativeMessagingOrigins(allowedExtensionIDs),
 	}, nil
 }
 
