@@ -41,6 +41,15 @@ func TestNativeMessagingLaunchArg(t *testing.T) {
 	}
 }
 
+func TestCobraDoesNotExposeHostCommand(t *testing.T) {
+	cmd := newRootCommand()
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "host" {
+			t.Fatal("host relay must remain an internal Chrome Native Messaging entry point")
+		}
+	}
+}
+
 func TestCobraVersionCommand(t *testing.T) {
 	cmd := newRootCommand()
 	var output bytes.Buffer

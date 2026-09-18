@@ -102,15 +102,15 @@ dot；hyphen 版本 `com.ifuryst.open-computer-use.extension` 会被
 当前 M1 骨架已经提供：
 
 - native-endian 4-byte length-prefixed JSON frames。
-- `open-browser-use host`：启动 Chrome native messaging stdio 到 SDK Unix
-  socket 的中继；默认 socket 路径是
+- Chrome Native Messaging 以 `chrome-extension://...` origin 参数启动稳定
+  native-host 二进制时，CLI 自动进入内部 host mode；它把 Chrome native
+  messaging stdio 中继到 SDK Unix socket。默认 socket 路径是
   `/tmp/open-browser-use/<uuid>.sock`，并写入
   `/tmp/open-browser-use/active.json` 供 CLI 自动发现当前活跃 socket。
-  Chrome native messaging 以 `chrome-extension://...` origin 参数启动二进制时，
-  CLI 会自动进入 host mode。
+  relay 不作为公开 CLI 子命令暴露，避免用户手工启动第二个 host 覆盖 active
+  registry；测试或内部集成应直接调用 `runHost`/`internal/host`。
 - 无参数运行 `open-browser-use` 或 `obu` 输出 CLI 版本、浏览器插件检测状态、
-  插件版本和下一步安装/升级命令，不再启动 native host；手工启动 host 使用
-  `open-browser-use host`。
+  插件版本和下一步安装/升级命令，不启动 native host。
 - `open-browser-use manifest`：输出 Chrome native messaging host manifest。
 - `open-browser-use install-manifest`：把 native messaging host manifest
   写入 Chrome 默认位置，或通过 `--output` 写到指定路径。默认会同时允许 OBU

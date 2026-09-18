@@ -44,7 +44,7 @@ open-browser-use ping --socket-dir /tmp/open-browser-use
 open-browser-use ping --timeout 20s
 ```
 
-If no active host exists, opening Chrome with the extension enabled can allow Chrome to start the native host.
+If no active host exists, opening Chrome with the extension enabled can allow Chrome to start the native host. Do not start `obu host` manually: the relay is an internal Chrome Native Messaging entry point, and a manually started relay can overwrite `active.json` with a socket that has no Chrome extension peer, causing `read unix ...: i/o timeout`.
 
 ## Extension Or Native Host Mismatch
 

@@ -113,7 +113,6 @@ func newRootCommand() *cobra.Command {
 	root.Flags().BoolVarP(&showVersion, "version", "v", false, "print version")
 	addSocketFlags(root, &options)
 	root.AddCommand(
-		newHostCommand(),
 		newSetupCommand(),
 		newManifestCommand(),
 		newInstallManifestCommand(),
@@ -152,24 +151,6 @@ func newRootCommand() *cobra.Command {
 		newVersionCommand(),
 	)
 	return root
-}
-
-func newHostCommand() *cobra.Command {
-	var socketDir string
-	var socketPath string
-	var cdpMode string
-	cmd := &cobra.Command{
-		Use:   "host",
-		Short: "Run the native messaging host relay",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runHost(socketDir, socketPath, cdpMode)
-		},
-	}
-	cmd.Flags().StringVar(&socketDir, "socket-dir", host.DefaultSocketDir, "directory for SDK Unix sockets")
-	cmd.Flags().StringVar(&socketPath, "socket-path", "", "explicit SDK Unix socket path")
-	cmd.Flags().StringVar(&cdpMode, "cdp-mode", "", "CDP transport mode: direct|auto|extension (default extension)")
-	return cmd
 }
 
 func runHost(socketDir string, socketPath string, cdpMode string) error {

@@ -25,10 +25,13 @@
 
 此前 CLI 的 stale-socket 自愈逻辑把“连接失败”当成“socket 文件已失效”，直接 unlink 候选路径。Unix domain socket 的路径名与监听 inode 分离：对仍在运行的 listener unlink 后，旧进程可以继续存活并显示 native host connected，但后续 CLI 扫描永远找不到它。这正好解释了“扩展 connected、上一轮成功、下一轮 no connected target”的现象。修复后由 host 自己在退出时负责清理 socket，CLI 只修复自己的 registry 提示。
 
+后续确认手动 `obu host` 还会制造第二个 relay 并覆盖全局 `active.json`，导致 CLI 连接到没有 Chrome Native Messaging peer 的 host 后等待超时。因此 relay 只保留为 Chrome Native Messaging 的内部入口，不再注册为公开 CLI 子命令。
+
 ### 📁 Files Modified
 
 - `cmd/open-browser-use/main.go`
 - `cmd/open-browser-use/main_test.go`
+- `docs/RELIABILITY.md`
 - `docs/ARCHITECTURE.md`
 - `skills/open-browser-use/references/troubleshooting.md`
 - `docs/histories/2026-09/20260918-1115-preserve-native-host-socket.md`
