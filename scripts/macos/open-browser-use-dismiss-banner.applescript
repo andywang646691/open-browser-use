@@ -6,6 +6,7 @@
 property chromeProcessName : "Google Chrome"
 property maxDepth : 12
 property bannerDescriptions : {"信息栏容器", "Info bar container"}
+property bannerMarkers : {"自动测试软件正在控制 Chrome", "Chrome is being controlled by automated test software"}
 property closeLabels : {"关闭", "关闭按钮", "Close", "Close button", "Dismiss"}
 
 on asTextSafely(theValue)
@@ -47,8 +48,12 @@ end childrenSafely
 on isBanner(theElement)
   set elementDescription to my attributeSafely(theElement, "description")
   set elementName to my attributeSafely(theElement, "name")
+  set elementValue to my attributeSafely(theElement, "value")
   return (bannerDescriptions contains elementDescription) or ¬
-    (bannerDescriptions contains elementName)
+    (bannerDescriptions contains elementName) or ¬
+    (bannerMarkers contains elementDescription) or ¬
+    (bannerMarkers contains elementName) or ¬
+    (bannerMarkers contains elementValue)
 end isBanner
 
 on isCloseButton(theElement)
@@ -58,8 +63,11 @@ on isCloseButton(theElement)
   --   在“设置”中关闭  -> settings action; never press this one
   --   关闭             -> the X/dismiss button; press only this one
   set elementDescription to my attributeSafely(theElement, "description")
-  return (elementDescription is "关闭") or (elementDescription is "Close") or ¬
-    (elementDescription is "Close button")
+  set elementName to my attributeSafely(theElement, "name")
+  set elementValue to my attributeSafely(theElement, "value")
+  return (closeLabels contains elementDescription) or ¬
+    (closeLabels contains elementName) or ¬
+    (closeLabels contains elementValue)
 end isCloseButton
 
 on pressCloseButtonInTree(theElement, depth)

@@ -42,7 +42,10 @@ func startMacRemoteDebuggingUIHelper(reason string) {
 	diaglog.Event("mac_approval_helper_requested", map[string]any{
 		"reason": reason,
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	// The Chrome sheet can be created after the Browser Root handshake starts.
+	// Keep the helper alive longer than a normal caller deadline so a late sheet
+	// is still approved even when the caller has already stopped waiting.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	go func() {
 		defer cancel()
 		_ = runMacRemoteDebuggingUIHelper(ctx, reason)

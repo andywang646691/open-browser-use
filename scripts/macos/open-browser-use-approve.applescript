@@ -8,6 +8,14 @@ on textSafely(theValue)
     end try
 end textSafely
 
+on isApprovalText(theText)
+    if theText is "Allow remote debugging?" or ¬
+        theText is "要允许远程调试吗？" or ¬
+        theText is "要允许远程调试吗?" then return true
+    if theText contains "remote debugging" or theText contains "远程调试" then return true
+    return false
+end isApprovalText
+
 tell application "System Events"
     if exists process "Google Chrome" then
         tell process "Google Chrome"
@@ -15,8 +23,22 @@ tell application "System Events"
                 try
                     repeat with s in sheets of w
                         set sheetName to my textSafely(name of s)
-                        if sheetName is "Allow remote debugging?" or sheetName is "要允许远程调试吗？" then
-                            set sheetContents to entire contents of s
+                        set sheetContents to entire contents of s
+                        set approvalSheet to my isApprovalText(sheetName)
+                        if not approvalSheet then
+                            repeat with nodeRef in sheetContents
+                                try
+                                    set nodeText to my textSafely(name of nodeRef)
+                                    if not (my isApprovalText(nodeText)) then set nodeText to my textSafely(description of nodeRef)
+                                    if not (my isApprovalText(nodeText)) then set nodeText to my textSafely(value of nodeRef)
+                                    if my isApprovalText(nodeText) then
+                                        set approvalSheet to true
+                                        exit repeat
+                                    end if
+                                end try
+                            end repeat
+                        end if
+                        if approvalSheet then
                             repeat with nodeRef in sheetContents
                                 try
                                     if (role of nodeRef as text) is "AXButton" then

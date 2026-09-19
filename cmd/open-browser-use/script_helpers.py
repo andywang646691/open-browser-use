@@ -100,7 +100,7 @@ def _get_conn(timeout=None):
 
 
 def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
-    """Start the client-side macOS approval helper once per script process."""
+    """Start a persistent client-side macOS approval waiter once per script."""
     global _MAC_APPROVAL_PROC
     if sys.platform != "darwin" or not _MAC_APPROVAL_HELPER:
         return
@@ -126,7 +126,10 @@ def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
         )
         helper_env["OBU_MAC_APPROVAL_PARENT_PID"] = str(os.getpid())
         _MAC_APPROVAL_PROC = subprocess.Popen(
-            [_MAC_APPROVAL_HELPER, "approve"],
+            # The helper owns the polling loop. A single one-shot probe races
+            # Chrome's delayed creation of the Browser Root approval sheet.
+            # Keep this child independent of the Python caller's deadline.
+            [_MAC_APPROVAL_HELPER, "approve-wait", "30"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

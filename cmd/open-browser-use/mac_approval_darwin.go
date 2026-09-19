@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ifuryst/open-browser-use/internal/diaglog"
@@ -55,61 +56,50 @@ func runMacRemoteDebuggingUIHelper(ctx context.Context, reason string) error {
 		"parentPID": os.Getenv("OBU_MAC_APPROVAL_PARENT_PID"),
 	})
 
-	for ctx.Err() == nil {
-		attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		cmd := exec.CommandContext(attemptCtx, helper, "approve")
-		output, err := cmd.CombinedOutput()
-		cancel()
-		if err == nil {
-			diaglog.Event("mac_approval_sheet_clicked", map[string]any{
-				"path":   helper,
-				"reason": reason,
-			})
-			startMacRemoteDebuggingBannerHelper(reason)
-			return nil
-		}
-		if isApprovalHelperPermissionDenied(err) {
-			diaglog.Event("mac_approval_permission_denied", map[string]any{
-				"path":   helper,
-				"reason": reason,
-				"error":  strings.TrimSpace(string(output)),
-			})
-			return fmt.Errorf("macOS Accessibility permission is required for %s; the helper opened System Settings and highlighted itself", helper)
-		}
-		if !isApprovalHelperNotFound(err) {
-			diaglog.Event("mac_approval_probe_failed", map[string]any{
-				"path":   helper,
-				"reason": reason,
-				"error":  err.Error(),
-				"output": strings.TrimSpace(string(output)),
-			})
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf("macOS approval helper failed: %w (%s)", err, strings.TrimSpace(string(output)))
-		}
-
-		// Exit status 1 means that the helper is healthy but the sheet has not
-		// appeared yet. Keep the one patient Browser Root handshake alive.
-		timer := time.NewTimer(120 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
+	// The helper owns the polling loop. This is important for `obu exec`: the
+	// Python subprocess may finish its caller deadline while Chrome is still
+	// creating the sheet, but the detached helper must continue waiting.
+	cmd := exec.CommandContext(ctx, helper, "approve-wait", "30")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		diaglog.Event("mac_approval_sheet_clicked", map[string]any{
+			"path":   helper,
+			"reason": reason,
+		})
+		startMacRemoteDebuggingBannerHelper(reason)
+		return nil
 	}
-	if err := ctx.Err(); err != nil {
+	if isApprovalHelperPermissionDenied(err) {
+		diaglog.Event("mac_approval_permission_denied", map[string]any{
+			"path":   helper,
+			"reason": reason,
+			"error":  strings.TrimSpace(string(output)),
+		})
+		return fmt.Errorf("macOS Accessibility permission is required for %s; the helper opened System Settings and highlighted itself", helper)
+	}
+	if ctx.Err() != nil {
 		diaglog.Event("mac_approval_helper_finished", map[string]any{
 			"reason": reason,
 			"status": "timeout_or_cancelled",
-			"error":  err.Error(),
+			"error":  ctx.Err().Error(),
 		})
-		return err
+		return ctx.Err()
 	}
-	return nil
+	if isApprovalHelperNotFound(err) {
+		diaglog.Event("mac_approval_helper_finished", map[string]any{
+			"path":   helper,
+			"reason": reason,
+			"status": "sheet_not_found",
+		})
+		return nil
+	}
+	diaglog.Event("mac_approval_probe_failed", map[string]any{
+		"path":   helper,
+		"reason": reason,
+		"error":  err.Error(),
+		"output": strings.TrimSpace(string(output)),
+	})
+	return fmt.Errorf("macOS approval helper failed: %w (%s)", err, strings.TrimSpace(string(output)))
 }
 
 func isApprovalHelperPermissionDenied(err error) bool {
@@ -140,7 +130,10 @@ func startMacRemoteDebuggingBannerHelper(reason string) {
 		"path":   helper,
 		"reason": reason,
 	})
-	cmd := exec.Command(helper, "dismiss-banner")
+	// Chrome creates the automation infobar shortly after the approval sheet
+	// is accepted. Keep the detached helper alive long enough to observe it;
+	// a one-shot probe races that delayed UI update.
+	cmd := exec.Command(helper, "dismiss-banner-wait", "15")
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -148,6 +141,10 @@ func startMacRemoteDebuggingBannerHelper(reason string) {
 		"OBU_MAC_APPROVAL_REASON="+reason,
 		"OBU_MAC_APPROVAL_PARENT_PID="+strconv.Itoa(os.Getpid()),
 	)
+	// Chrome may tear down the native-messaging host immediately after an
+	// extension lifecycle request. Put the UI waiter in its own session so the
+	// host shutdown cannot kill it before the infobar is rendered.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		diaglog.Event("mac_banner_helper_start_failed", map[string]any{
 			"path":  helper,
@@ -159,6 +156,28 @@ func startMacRemoteDebuggingBannerHelper(reason string) {
 		"path": helper,
 		"pid":  cmd.Process.Pid,
 	})
+	go func() {
+		waitErr := cmd.Wait()
+		if waitErr == nil {
+			diaglog.Event("mac_banner_dismissed", map[string]any{
+				"path":   helper,
+				"reason": reason,
+			})
+			return
+		}
+		if isApprovalHelperNotFound(waitErr) {
+			diaglog.Event("mac_banner_not_found", map[string]any{
+				"path":   helper,
+				"reason": reason,
+			})
+			return
+		}
+		diaglog.Event("mac_banner_probe_failed", map[string]any{
+			"path":   helper,
+			"reason": reason,
+			"error":  waitErr.Error(),
+		})
+	}()
 }
 
 func runMacRemoteDebuggingBannerHelper(ctx context.Context) error {

@@ -170,7 +170,7 @@ class PreludeTest(unittest.TestCase):
              mock.patch.object(self.sh.subprocess, "Popen", return_value=proc) as popen:
             self.sh._maybe_start_mac_remote_debugging_approval("attach", "direct")
         popen.assert_called_once()
-        self.assertEqual(popen.call_args.args[0], ["/tmp/open-browser-use", "approve"])
+        self.assertEqual(popen.call_args.args[0], ["/tmp/open-browser-use", "approve-wait", "30"])
 
     def test_extension_mode_never_starts_mac_approval_helper(self):
         self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use"

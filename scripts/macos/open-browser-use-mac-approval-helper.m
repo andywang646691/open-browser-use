@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreServices/CoreServices.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static NSString *helperBundlePath(void) {
     NSString *executablePath = [[NSProcessInfo processInfo] arguments].firstObject;
@@ -173,17 +174,52 @@ static BOOL pressButtonInTree(AXUIElementRef root, NSArray<NSString *> *labels, 
 }
 
 static BOOL isApprovalSheet(AXUIElementRef sheet) {
-    NSArray<NSString *> *labels = @[ @"Allow remote debugging?", @"要允许远程调试吗？" ];
+    NSArray<NSString *> *labels = @[
+        @"Allow remote debugging?",
+        @"要允许远程调试吗？",
+        @"要允许远程调试吗?"
+    ];
     NSString *title = stringAttribute(sheet, kAXTitleAttribute);
     NSString *description = stringAttribute(sheet, kAXDescriptionAttribute);
     NSString *value = stringAttribute(sheet, kAXValueAttribute);
+    NSString *lowerTitle = title.lowercaseString;
+    NSString *lowerDescription = description.lowercaseString;
+    NSString *lowerValue = value.lowercaseString;
     return [labels containsObject:title] || [labels containsObject:description] || [labels containsObject:value] ||
-           ([title containsString:@"remote debugging"] || [title containsString:@"远程调试"]);
+           [lowerTitle containsString:@"remote debugging"] ||
+           [lowerDescription containsString:@"remote debugging"] ||
+           [lowerValue containsString:@"remote debugging"] ||
+           [title containsString:@"远程调试"] ||
+           [description containsString:@"远程调试"] ||
+           [value containsString:@"远程调试"];
+}
+
+static BOOL containsApprovalMarker(AXUIElementRef element, NSUInteger depth) {
+    if (element == NULL || depth > 24) return NO;
+    if (isApprovalSheet(element)) return YES;
+
+    CFArrayRef children = copyArrayAttribute(element, kAXChildrenAttribute);
+    if (children == NULL) return NO;
+
+    BOOL found = NO;
+    CFIndex count = CFArrayGetCount(children);
+    for (CFIndex index = 0; index < count && !found; index++) {
+        found = containsApprovalMarker((AXUIElementRef)CFArrayGetValueAtIndex(children, index), depth + 1);
+    }
+    CFRelease(children);
+    return found;
+}
+
+static BOOL isApprovalContainer(AXUIElementRef element) {
+    NSString *role = stringAttribute(element, kAXRoleAttribute);
+    NSString *subrole = stringAttribute(element, kAXSubroleAttribute);
+    return [role isEqualToString:(__bridge NSString *)kAXSheetRole] ||
+           [subrole isEqualToString:@"AXApplicationAlertDialog"];
 }
 
 static BOOL findAndApproveInTree(AXUIElementRef element, NSUInteger depth) {
     if (element == NULL || depth > 20) return NO;
-    if (isApprovalSheet(element)) {
+    if (isApprovalContainer(element) && containsApprovalMarker(element, 0)) {
         return pressButtonInTree(element, @[@"Allow", @"允许"], 0);
     }
     CFArrayRef children = copyArrayAttribute(element, kAXChildrenAttribute);
@@ -210,7 +246,7 @@ static BOOL approveInApplication(AXUIElementRef application) {
             CFIndex sheetCount = CFArrayGetCount(sheets);
             for (CFIndex sheetIndex = 0; sheetIndex < sheetCount && !approved; sheetIndex++) {
                 AXUIElementRef sheet = (AXUIElementRef)CFArrayGetValueAtIndex(sheets, sheetIndex);
-                if (isApprovalSheet(sheet)) {
+                if (containsApprovalMarker(sheet, 0)) {
                     approved = pressButtonInTree(sheet, @[@"Allow", @"允许"], 0);
                 }
             }
@@ -223,8 +259,16 @@ static BOOL approveInApplication(AXUIElementRef application) {
 }
 
 static BOOL isBanner(AXUIElementRef element) {
-    return [@[ @"Info bar container", @"信息栏容器" ] containsObject:stringAttribute(element, kAXTitleAttribute)] ||
-           [@[ @"Info bar container", @"信息栏容器" ] containsObject:stringAttribute(element, kAXDescriptionAttribute)];
+    NSArray<NSString *> *containers = @[ @"Info bar container", @"信息栏容器" ];
+    NSArray<NSString *> *markers = @[
+        @"自动测试软件正在控制 Chrome",
+        @"Chrome is being controlled by automated test software"
+    ];
+    return [containers containsObject:stringAttribute(element, kAXTitleAttribute)] ||
+           [containers containsObject:stringAttribute(element, kAXDescriptionAttribute)] ||
+           [markers containsObject:stringAttribute(element, kAXTitleAttribute)] ||
+           [markers containsObject:stringAttribute(element, kAXDescriptionAttribute)] ||
+           [markers containsObject:stringAttribute(element, kAXValueAttribute)];
 }
 
 static BOOL dismissInTree(AXUIElementRef element, NSUInteger depth) {
@@ -295,13 +339,79 @@ static BOOL performOperation(NSString *operation) {
     return changed;
 }
 
+static BOOL performDismissOnce(void) {
+    NSString *result = nil;
+    if (runAppleScriptResource(@"open-browser-use-dismiss-banner", &result)) {
+        if ([result isEqualToString:@"dismissed"]) return YES;
+        if (![result isEqualToString:@"not-found"]) return NO;
+    }
+    return performOperation(@"dismiss-banner");
+}
+
+static BOOL performApprovalOnce(void) {
+    NSString *result = nil;
+    if (runAppleScriptResource(@"open-browser-use-approve", &result)) {
+        if ([result isEqualToString:@"ready"]) return YES;
+        if (![result isEqualToString:@"not-found"]) return NO;
+    }
+    return performOperation(@"approve");
+}
+
+static NSTimeInterval approvalWaitSeconds(int argc, const char *argv[]) {
+    if (argc < 3) return 30.0;
+    char *end = NULL;
+    double seconds = strtod(argv[2], &end);
+    if (end == argv[2] || *end != '\0' || seconds <= 0.0 || seconds > 300.0) {
+        return 30.0;
+    }
+    return seconds;
+}
+
+static BOOL waitForApproval(int argc, const char *argv[]) {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:approvalWaitSeconds(argc, argv)];
+    while ([deadline timeIntervalSinceNow] > 0.0) {
+        if (performApprovalOnce()) return YES;
+        [NSThread sleepForTimeInterval:0.12];
+    }
+    return NO;
+}
+
+static BOOL dismissWaitSeconds(int argc, const char *argv[]) {
+    NSTimeInterval seconds = 15.0;
+    if (argc >= 3) {
+        char *end = NULL;
+        double parsed = strtod(argv[2], &end);
+        if (end != argv[2] && *end == '\0' && parsed > 0.0 && parsed <= 120.0) {
+            seconds = parsed;
+        }
+    }
+
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:seconds];
+    while ([deadline timeIntervalSinceNow] > 0.0) {
+        if (performDismissOnce()) return YES;
+        [NSThread sleepForTimeInterval:0.12];
+    }
+    return NO;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         registerHelperBundle();
         if (argc < 2) return 2;
         NSString *operation = [NSString stringWithUTF8String:argv[1]];
-        if (![operation isEqualToString:@"approve"] && ![operation isEqualToString:@"dismiss-banner"]) return 2;
+        if (![operation isEqualToString:@"approve"] &&
+            ![operation isEqualToString:@"approve-wait"] &&
+            ![operation isEqualToString:@"dismiss-banner-wait"] &&
+            ![operation isEqualToString:@"dismiss-banner"]) return 2;
         if (!ensureAccessibilityPermission()) return 3;
+
+        if ([operation isEqualToString:@"approve-wait"]) {
+            return waitForApproval(argc, argv) ? 0 : 1;
+        }
+
+        if ([operation isEqualToString:@"dismiss-banner-wait"]) {
+            return dismissWaitSeconds(argc, argv) ? 0 : 1;
+        }
 
         NSString *result = nil;
         NSString *resource = [operation isEqualToString:@"approve"]
