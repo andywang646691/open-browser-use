@@ -161,31 +161,59 @@ class PreludeTest(unittest.TestCase):
             request = self.last("getTabs")
             self.assertEqual(request["params"].get("_cdpMode"), "extension")
 
-    def test_direct_attach_starts_mac_approval_helper(self):
+    def test_mac_approval_needed_matches_go_cli(self):
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use-mac-approval-helper"
+        with mock.patch.object(self.sh.sys, "platform", "darwin"):
+            self.assertTrue(self.sh._mac_approval_needed("attach", "direct"))
+            self.assertTrue(self.sh._mac_approval_needed("executeCdp", "auto"))
+            self.assertTrue(self.sh._mac_approval_needed("listExtensions", "extension"))
+            self.assertFalse(self.sh._mac_approval_needed("attach", "extension"))
+            self.assertFalse(self.sh._mac_approval_needed("attach", None))
+            self.assertFalse(self.sh._mac_approval_needed("getTabs", "direct"))
+        with mock.patch.object(self.sh.sys, "platform", "linux"):
+            self.assertFalse(self.sh._mac_approval_needed("attach", "direct"))
+
+    def test_start_launches_detached_combined_helper_once(self):
         proc = mock.Mock()
         proc.poll.return_value = None
-        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use"
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use-mac-approval-helper"
         self.sh._MAC_APPROVAL_PROC = None
-        with mock.patch.object(self.sh.sys, "platform", "darwin"), \
-             mock.patch.object(self.sh.subprocess, "Popen", return_value=proc) as popen:
-            self.sh._maybe_start_mac_remote_debugging_approval("attach", "direct")
-        popen.assert_called_once()
-        self.assertEqual(popen.call_args.args[0], ["/tmp/open-browser-use", "approve-wait", "30"])
+        try:
+            with mock.patch.object(self.sh.subprocess, "Popen", return_value=proc) as popen:
+                self.sh._start_mac_remote_debugging_approval("attach")
+                self.sh._start_mac_remote_debugging_approval("attach")
+            popen.assert_called_once()
+            self.assertEqual(popen.call_args.args[0],
+                             ["/tmp/open-browser-use-mac-approval-helper", "approve-then-dismiss-wait", "30", "15"])
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+            self.assertEqual(popen.call_args.kwargs["env"]["OBU_MAC_APPROVAL_PARENT_PID"], str(os.getpid()))
+        finally:
+            self.sh._MAC_APPROVAL_PROC = None
 
-    def test_extension_mode_never_starts_mac_approval_helper(self):
-        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use"
-        self.sh._MAC_APPROVAL_PROC = None
+    def test_answered_request_never_starts_helper(self):
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use-mac-approval-helper"
         with mock.patch.object(self.sh.sys, "platform", "darwin"), \
-             mock.patch.object(self.sh.subprocess, "Popen") as popen:
-            self.sh._maybe_start_mac_remote_debugging_approval("attach", "extension")
-        popen.assert_not_called()
-
-    def test_request_starts_client_approval_after_direct_frame_is_sent(self):
-        with mock.patch.object(self.sh, "_maybe_start_mac_remote_debugging_approval") as start:
-            with mock.patch.dict(os.environ, {"OBU_CDP_MODE": "direct"}):
-                self.sh._request("attach", {"tabId": 42})
-        start.assert_called_once_with("attach", "direct")
+             mock.patch.object(self.sh, "_start_mac_remote_debugging_approval") as start, \
+             mock.patch.dict(os.environ, {"OBU_CDP_MODE": "direct"}):
+            self.sh._request("attach", {"tabId": 42})
+            time.sleep(self.sh._MAC_APPROVAL_START_DELAY + 0.2)
+        start.assert_not_called()
         self.assertEqual(self.last("attach")["params"]["tabId"], 42)
+
+    def test_parked_request_starts_helper(self):
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use-mac-approval-helper"
+        with mock.patch.object(self.sh.sys, "platform", "darwin"), \
+             mock.patch.object(self.sh, "_start_mac_remote_debugging_approval") as start:
+            timer = self.sh._schedule_mac_remote_debugging_approval("attach", "direct")
+            timer.join(self.sh._MAC_APPROVAL_START_DELAY + 2)
+        start.assert_called_once_with("attach")
+
+    def test_request_uses_explicit_cdp_mode_over_env(self):
+        self.sh._MAC_APPROVAL_HELPER = "/tmp/open-browser-use-mac-approval-helper"
+        with mock.patch.object(self.sh, "_schedule_mac_remote_debugging_approval", return_value=None) as schedule, \
+             mock.patch.dict(os.environ, {"OBU_CDP_MODE": "extension"}):
+            self.sh._request("attach", {"tabId": 42, "_cdpMode": "direct"})
+        schedule.assert_called_once_with("attach", "direct")
 
     def test_request_includes_local_deadline_for_queue_expiry(self):
         orig_timeout = self.sh._TIMEOUT

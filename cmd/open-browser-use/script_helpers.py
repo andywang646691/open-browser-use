@@ -19,6 +19,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
 
@@ -33,6 +34,18 @@ _SOCKET_PATH = os.environ.get("OBU_SCRIPT_SOCKET", "")
 _SOCKET_ERROR = os.environ.get("OBU_SCRIPT_SOCKET_ERROR", "")
 _MAC_APPROVAL_HELPER = os.environ.get("OBU_MAC_APPROVAL_HELPER", "") or os.environ.get("OBU_MAC_APPROVE_HELPER", "")
 _MAC_APPROVAL_PROC = None
+# A direct-capable request still unanswered after this delay is parked behind
+# Chrome's remote-debugging sheet; answered requests never start the helper.
+_MAC_APPROVAL_START_DELAY = 0.4
+_MAC_APPROVAL_LOCK = threading.Lock()
+_MAC_APPROVAL_EXTENSION_METHODS = frozenset({
+    "listExtensions", "installExtension", "reloadExtension",
+    "triggerExtensionAction", "uninstallExtension",
+})
+_MAC_APPROVAL_DIRECT_METHODS = frozenset({
+    "attach", "executeCdp", "readClipboardText", "writeClipboardText",
+    "readClipboard", "writeClipboard", "waitForFileChooser", "setFileChooserFiles",
+})
 _CONN = None
 _CURRENT_TAB = None
 _NEXT_REQ_ID = 0
@@ -99,47 +112,58 @@ def _get_conn(timeout=None):
     return _CONN
 
 
-def _maybe_start_mac_remote_debugging_approval(method, cdp_mode):
-    """Start a persistent client-side macOS approval waiter once per script."""
-    global _MAC_APPROVAL_PROC
+def _mac_approval_needed(method, cdp_mode):
+    """Mirror of the Go CLI's requestMayNeedDirectCDPApproval."""
     if sys.platform != "darwin" or not _MAC_APPROVAL_HELPER:
-        return
-    mode = (cdp_mode or "extension").strip().lower()
-    extension_methods = {
-        "listExtensions", "installExtension", "reloadExtension",
-        "triggerExtensionAction", "uninstallExtension",
-    }
-    if mode == "extension" and method not in extension_methods:
-        return
-    if method not in {
-        "attach", "executeCdp", "readClipboardText", "writeClipboardText",
-        "readClipboard", "writeClipboard", "waitForFileChooser", "setFileChooserFiles",
-        *extension_methods,
-    }:
-        return
-    if _MAC_APPROVAL_PROC is not None and _MAC_APPROVAL_PROC.poll() is None:
-        return
-    try:
+        return False
+    if method in _MAC_APPROVAL_EXTENSION_METHODS:
+        return True
+    mode = (cdp_mode or "extension").strip().lower() or "extension"
+    return mode != "extension" and method in _MAC_APPROVAL_DIRECT_METHODS
+
+
+def _start_mac_remote_debugging_approval(method):
+    """Launch one detached helper that approves the sheet, then closes the banner.
+
+    The helper stops waiting for the sheet when this script exits, keeps
+    closing the automation banner on its own, and refuses to run twice.
+    """
+    global _MAC_APPROVAL_PROC
+    with _MAC_APPROVAL_LOCK:
+        if _MAC_APPROVAL_PROC is not None and _MAC_APPROVAL_PROC.poll() is None:
+            return
         helper_env = os.environ.copy()
         helper_env["OBU_MAC_APPROVAL_REASON"] = (
-            "Python script request {} may create or reuse the Browser Root WebSocket".format(method)
+            "Python script request {} is waiting on the Browser Root WebSocket".format(method)
         )
         helper_env["OBU_MAC_APPROVAL_PARENT_PID"] = str(os.getpid())
-        _MAC_APPROVAL_PROC = subprocess.Popen(
-            # The helper owns the polling loop. A single one-shot probe races
-            # Chrome's delayed creation of the Browser Root approval sheet.
-            # Keep this child independent of the Python caller's deadline.
-            [_MAC_APPROVAL_HELPER, "approve-wait", "30"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            env=helper_env,
-        )
-    except OSError:
-        # The browser request remains authoritative. If helper startup fails,
-        # Chrome's approval sheet simply remains visible for manual approval.
-        _MAC_APPROVAL_PROC = None
+        try:
+            _MAC_APPROVAL_PROC = subprocess.Popen(
+                [_MAC_APPROVAL_HELPER, "approve-then-dismiss-wait", "30", "15"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+                env=helper_env,
+            )
+        except OSError:
+            # The browser request remains authoritative. If helper startup
+            # fails, Chrome's approval sheet stays visible for manual approval.
+            _MAC_APPROVAL_PROC = None
+
+
+def _schedule_mac_remote_debugging_approval(method, cdp_mode):
+    """Start the approval helper only if the request stays unanswered.
+
+    Returns a timer to cancel once the response arrives, or None.
+    """
+    if not _mac_approval_needed(method, cdp_mode):
+        return None
+    timer = threading.Timer(_MAC_APPROVAL_START_DELAY, _start_mac_remote_debugging_approval, args=(method,))
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _request(method, params=None):
@@ -169,6 +193,7 @@ def _request(method, params=None):
     cdp_mode = os.environ.get("OBU_CDP_MODE", "extension").strip().lower()
     if cdp_mode:
         request["params"].setdefault("_cdpMode", cdp_mode)
+    request_cdp_mode = request["params"].get("_cdpMode")
     # Local absolute deadline lets the extension reject an expired queued
     # action before starting it. This does not cancel already-started actions.
     request["params"]["_deadlineUnixMs"] = int((time.time() + _TIMEOUT) * 1000)
@@ -177,6 +202,7 @@ def _request(method, params=None):
         raise RuntimeError("obu request frame too large")
     deadline = time.monotonic() + _TIMEOUT
     previous_timeout = conn.gettimeout()
+    approval_timer = None
     try:
         _set_deadline(conn, deadline)
         try:
@@ -188,7 +214,7 @@ def _request(method, params=None):
             _SOCKET_ERROR = ("request write failed; delivery is unknown; restart the script "
                              "and verify browser state before retrying")
             raise
-        _maybe_start_mac_remote_debugging_approval(method, cdp_mode)
+        approval_timer = _schedule_mac_remote_debugging_approval(method, request_cdp_mode)
         while True:
             body = _read_frame(conn, deadline)
             if body.get("id") != request_id:
@@ -204,6 +230,8 @@ def _request(method, params=None):
                 raise RuntimeError("obu {}: {}".format(method, message))
             return body.get("result")
     finally:
+        if approval_timer is not None:
+            approval_timer.cancel()
         conn.settimeout(previous_timeout)
         if _SOCKET_ERROR:
             conn.close()

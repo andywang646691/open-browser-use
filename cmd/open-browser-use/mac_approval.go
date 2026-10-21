@@ -1,12 +1,19 @@
 package main
 
 import (
-	"context"
 	"strings"
 	"time"
-
-	"github.com/ifuryst/open-browser-use/internal/diaglog"
 )
+
+// macApprovalStartDelay is how long a direct-capable request may stay
+// unanswered before the approval helper is started. Once Chrome has approved
+// the shared Browser Root connection these requests answer well within this
+// window, so the helper (and its Accessibility polling) is only started when
+// a request is actually parked behind Chrome's remote-debugging sheet.
+const macApprovalStartDelay = 400 * time.Millisecond
+
+// startMacApprovalHelperFunc is replaced in tests.
+var startMacApprovalHelperFunc = startMacApprovalHelper
 
 func requestMayNeedDirectCDPApproval(method string, params map[string]any) bool {
 	mode := ""
@@ -38,16 +45,33 @@ func requestMayNeedDirectCDPApproval(method string, params map[string]any) bool 
 	}
 }
 
-func startMacRemoteDebuggingUIHelper(reason string) {
-	diaglog.Event("mac_approval_helper_requested", map[string]any{
-		"reason": reason,
+// scheduleMacApprovalHelper starts the approval helper if the request is
+// still unanswered after macApprovalStartDelay. The returned stop function
+// must be called once the response (or an error) arrives.
+func scheduleMacApprovalHelper(reason string) (stop func()) {
+	timer := time.AfterFunc(macApprovalStartDelay, func() {
+		startMacApprovalHelperFunc(reason)
 	})
-	// The Chrome sheet can be created after the Browser Root handshake starts.
-	// Keep the helper alive longer than a normal caller deadline so a late sheet
-	// is still approved even when the caller has already stopped waiting.
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	go func() {
-		defer cancel()
-		_ = runMacRemoteDebuggingUIHelper(ctx, reason)
-	}()
+	return func() { timer.Stop() }
+}
+
+// macApprovalHelperStatus maps the helper's exit code contract to a stable
+// diagnostic status (see scripts/macos/open-browser-use-mac-approval-helper.m).
+func macApprovalHelperStatus(exitCode int) string {
+	switch exitCode {
+	case 0:
+		return "approved"
+	case 1:
+		return "sheet_not_found"
+	case 2:
+		return "usage_error"
+	case 3:
+		return "permission_denied"
+	case 4:
+		return "already_running"
+	case 5:
+		return "caller_exited"
+	default:
+		return "failed"
+	}
 }

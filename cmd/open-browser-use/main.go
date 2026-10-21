@@ -2564,7 +2564,8 @@ func invokeWithProfile(socketPath string, socketDir string, browser string, prof
 			"turnID":    params["turn_id"],
 			"deadline":  params["_deadlineUnixMs"],
 		})
-		startMacRemoteDebuggingUIHelper(reason)
+		stopApproval := scheduleMacApprovalHelper(reason)
+		defer stopApproval()
 	}
 	var response map[string]any
 	if err := wire.ReadJSON(conn, &response); err != nil {
