@@ -61,8 +61,8 @@ Chrome route 的拓扑结构：
 
 ```text
 upper-layer runtime / CLI / Python prelude
-  ├─ [macOS client helper] System Events -> Chrome windows -> remote-debugging sheet
-  │    exact Allow/允许 approval + safe automation-banner dismissal
+  ├─ [macOS client helper] Accessibility -> Chrome + PWA shim windows -> remote-debugging sheet
+  │    exact Allow/允许 approval, then this infobar's close button (web content never inspected)
   └─ /tmp/open-browser-use/<uuid>.sock
      -> open-browser-use Go native host
         ├─ [Direct CDP] one patient Browser Root WebSocket
@@ -87,7 +87,7 @@ upper-layer runtime / CLI / Python prelude
 - **精确 Target 映射**：扩展端暴露窄作用域 RPC `getTargetMapping({ session_id, turn_id, tabId })`，验证 ownership 并重载 discarded 页面后，直接读取 `chrome.debugger.getTargets()` 返回精确 `targetId`，严禁跨 profile 进行 URL/title 猜测。
 - **生命周期与清理**：`releaseTabs`、`closeUserTab`、`finalizeTabs`、`turnEnded` 会同步回收 Direct CDP 关联 session 并执行 `Target.detachFromTarget`，保持与扩展端所有权一致。
 - **单一 patient Browser 连接**：personal Chrome 可以把 Browser WebSocket 的 HTTP Upgrade 停在远程调试授权弹窗上。Host 对这条本地 Browser Root 握手不设置 transport-local handshake timeout，并在 daemon 范围只保留一个 pending 初始化；某个 caller deadline 到期只停止该 caller 的等待，不取消共享握手，也不创建第二个授权弹窗。批准后后续 task 复用同一 Browser Root 连接；Chrome 重启/连接断开后再懒加载重建。
-- **macOS 客户端授权助手**：Accessibility 不在 native host、CLI 或 Python 进程内执行。安装流程同时构建并代码签名稳定的 `open-browser-use-mac-approval-helper`，放在 `~/Library/Application Support/OpenBrowserUse/approval-helper/`；CLI / Python launcher 在 Direct-capable 请求已经写入 socket 后调用这个唯一 helper。helper 首次运行通过 `AXIsProcessTrustedWithOptions` 请求 macOS 显示辅助功能授权提示，并通过 Accessibility API 精确匹配 `Allow remote debugging?` / `要允许远程调试？`，只按 `Allow` / `允许`；批准后仍由同一 helper 收起 automation banner。用户只需在系统设置中启用该 helper。
+- **macOS 客户端授权助手**：Accessibility 不在 native host、CLI 或 Python 进程内执行。安装流程构建并代码签名 `Open Browser Use Approval Helper.app`（`~/Library/Application Support/OpenBrowserUse/approval-helper/`），它是唯一使用 Accessibility API 的进程，并用 `responsibility_spawnattrs_setdisclaim` 重新 exec 自身，使 TCC 只认 helper 自己的授权而不是启动它的终端 / agent。CLI / Python launcher 把 Direct-capable 请求写入 socket 后，若 400ms 内仍未收到响应（请求停在授权框上），才以独立 session 启动一次 `approve-then-dismiss-wait`；已批准时请求很快返回，不会启动 helper。helper 只检查 Chrome 及其 PWA 应用壳进程（`com.google.Chrome.app.*`，Chrome 会把授权框挂到最近激活的窗口上）的 window sheet / dialog，跳过 `AXWebArea`，只按 `Allow` / `允许`；批准后定位含 automation 文案的那一条 infobar，只按它自己的关闭按钮。批准阶段读取调用方 PID：调用方退出且屏幕上没有授权框时停止；banner 阶段不依赖调用方。批准与收起各有单实例锁。后台模式从不弹阻塞 UI，未授权时立即退出（码 3），交互引导由 `setup` 子命令负责。退出码与诊断事件见 `skills/open-browser-use/references/troubleshooting.md`。
 
 Chrome native messaging host name 固定为：
 

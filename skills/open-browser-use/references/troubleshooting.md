@@ -123,6 +123,46 @@ effects. No browser action is automatically replayed.
 Timeout diagnostics strip URL credentials, query and fragment, but paths and
 script output may still be private; redact them before sharing logs.
 
+## macOS Remote-Debugging Approval (Direct CDP)
+
+Personal Chrome asks "Allow remote debugging?" / "要允许远程调试吗？" when the
+native host opens its Browser Root WebSocket. On macOS the approval helper
+presses `Allow` automatically when it has Accessibility permission.
+
+Helper path:
+`~/Library/Application Support/OpenBrowserUse/approval-helper/Open Browser Use Approval Helper.app/Contents/MacOS/open-browser-use-mac-approval-helper`
+
+- `status`: prints `trusted=1|0`, never prompts.
+- `setup`: interactive guidance (opens Accessibility settings and the helper
+  folder). Only run it when the user is present.
+- `probe`: reports whether an approval sheet / automation banner is visible
+  and whether its button was found, without pressing anything.
+- `dump`: prints the browser-native AX tree (web content skipped).
+
+Exit codes: `0` approved, `1` no sheet before the deadline, `2` usage, `3`
+Accessibility permission missing, `4` another helper already running, `5`
+caller exited while no sheet was visible.
+
+Diagnostics in `~/Library/Logs/OpenBrowserUse/native-host.log`:
+`mac_approval_helper_phase_started`, `mac_approval_helper_sheet_visible`,
+`mac_approval_helper_pressed` (`control`: `allow` / `banner_close`),
+`mac_approval_helper_press_failed` (`axError`),
+`mac_approval_helper_finished` (`exitCode`, `sawSheet`).
+
+Common causes:
+
+- `trusted=0` after rebuilding: an ad-hoc signed helper loses its grant on
+  every build. Ask the user to re-enable it in Privacy & Security >
+  Accessibility (or set `OBU_MAC_CODESIGN_IDENTITY` before building).
+- Sheet visible to the user but `probe` reports none: the sheet lives in a
+  window the helper cannot enumerate. Chrome attaches it to the most recently
+  active browser window, including installed web-app (PWA) windows hosted by
+  `com.google.Chrome.app.*` shims, which the helper scans.
+- Host stuck in `direct_cdp_connect_started` with no sheet anywhere: an
+  orphaned consent sheet from a closed client was answered first. Restart the
+  native host (reload the extension) so it opens a fresh Browser Root
+  handshake.
+
 ## When To Escalate To The User
 
 Ask the user for help when:
